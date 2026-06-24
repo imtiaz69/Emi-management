@@ -8,7 +8,7 @@ const EMISchedule = require("../models/EMISchedule");
 const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate } = require("../middleware/auth");
-const { riskCategoryFromDays } = require("../services/emiService");
+const { calculateRiskScore, riskCategoryFromDays, roundMoney } = require("../services/emiService");
 
 const router = express.Router();
 router.use(authenticate);
@@ -21,12 +21,29 @@ router.get(
     const activeEmis = await Loan.countDocuments({ ...scope.loan, status: "active" });
     const dueSchedules = await EMISchedule.find({ ...scope.schedule, status: { $in: ["pending", "partial", "overdue"] } });
     const dueAmount = dueSchedules.reduce((sum, row) => sum + Math.max(0, row.amountDue + row.lateFee - row.amountPaid), 0);
-    const overdueCount = dueSchedules.filter((row) => row.dueDate < now).length;
+    const overdueSchedules = dueSchedules.filter((row) => row.dueDate < now);
+    const overdueCount = overdueSchedules.length;
+    const totalOverdueAmount = overdueSchedules.reduce((sum, row) => sum + Math.max(0, row.amountDue + row.lateFee - row.amountPaid), 0);
     const monthStart = dayjs().startOf("month").toDate();
     const collections = await Transaction.find({ ...scope.transaction, paymentDate: { $gte: monthStart } });
     const monthlyCollection = collections.reduce((sum, row) => sum + row.amount, 0);
+    const allCollections = await Transaction.find(scope.transaction).select("amount");
+    const totalCollection = allCollections.reduce((sum, row) => sum + row.amount, 0);
+    const saleLoans = await Loan.find({ ...scope.loan, status: { $in: ["active", "closed", "defaulted"] } }).select("principal");
+    const totalSales = saleLoans.reduce((sum, row) => sum + row.principal, 0);
+    const requestedLoansCount = req.user.role === "seller" ? await Loan.countDocuments({ sellerId: req.user._id, status: "requested" }) : 0;
     const lowStockProducts = req.user.role === "seller" ? await Product.find({ sellerId: req.user._id, $expr: { $lte: ["$stock", "$lowStockThreshold"] }, status: "active" }) : [];
-    res.json({ activeEmis, dueAmount, overdueCount, monthlyCollection, lowStockProducts });
+    res.json({
+      activeEmis,
+      dueAmount: roundMoney(dueAmount),
+      overdueCount,
+      monthlyCollection: roundMoney(monthlyCollection),
+      totalCollection: roundMoney(totalCollection),
+      totalOverdueAmount: roundMoney(totalOverdueAmount),
+      totalSales: roundMoney(totalSales),
+      requestedLoansCount,
+      lowStockProducts
+    });
   })
 );
 
@@ -45,16 +62,35 @@ router.get(
   asyncHandler(async (req, res) => {
     const rows = await EMISchedule.find({ ...scopeFilter(req).schedule, status: { $in: ["pending", "partial", "overdue"] }, dueDate: { $lt: new Date() } })
       .populate("buyerId", "name phone email")
-      .populate("loanId")
+      .populate({ path: "loanId", populate: { path: "productId", select: "name price" } })
       .sort({ dueDate: 1 });
+    const loanIds = [...new Set(rows.map((row) => row.loanId?._id?.toString()).filter(Boolean))];
+    const scheduleStats = new Map();
+    await Promise.all(
+      loanIds.map(async (loanId) => {
+        const schedules = await EMISchedule.find({ loanId }).select("amountDue");
+        const totalEmis = schedules.length;
+        const averageEmi = totalEmis ? schedules.reduce((sum, schedule) => sum + schedule.amountDue, 0) / totalEmis : 0;
+        scheduleStats.set(loanId, { totalEmis, averageEmi });
+      })
+    );
+
     res.json(
       rows.map((row) => {
         const daysOverdue = dayjs().diff(dayjs(row.dueDate), "day");
+        const balance = Math.max(0, row.amountDue + row.lateFee - row.amountPaid);
+        const stats = scheduleStats.get(row.loanId?._id?.toString()) || {};
         return {
           ...row.toObject(),
           daysOverdue,
           riskCategory: riskCategoryFromDays(daysOverdue),
-          balance: Math.max(0, row.amountDue + row.lateFee - row.amountPaid)
+          riskScore: calculateRiskScore({
+            overdueAmount: balance,
+            totalDaysOverdue: daysOverdue,
+            totalEmis: stats.totalEmis,
+            averageEmi: stats.averageEmi
+          }),
+          balance: roundMoney(balance)
         };
       })
     );

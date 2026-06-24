@@ -73,7 +73,7 @@ router.get(
     const requestedLoans = await Loan.find({ sellerId: req.user._id, status: "requested" }).distinct("buyerId");
     const kyc = await KYCDocument.find({
       userId: { $in: requestedLoans },
-      sellerId: req.user._id,
+      $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }],
       status: "pending"
     })
       .populate("userId", "name email phone")
@@ -89,6 +89,8 @@ router.post(
   asyncHandler(async (req, res) => {
     const kyc = await KYCDocument.findById(req.params.kycId);
     if (!kyc) return res.status(404).json({ message: "KYC not found" });
+    const relatedLoan = await Loan.findOne({ sellerId: req.user._id, buyerId: kyc.userId, status: { $in: ["requested", "approved", "active"] } });
+    if (!relatedLoan) return res.status(403).json({ message: "This buyer does not have an EMI request with your shop" });
     kyc.status = "approved";
     kyc.reviewedBy = req.user._id;
     kyc.reviewedAt = new Date();
@@ -106,6 +108,8 @@ router.post(
   asyncHandler(async (req, res) => {
     const kyc = await KYCDocument.findById(req.params.kycId);
     if (!kyc) return res.status(404).json({ message: "KYC not found" });
+    const relatedLoan = await Loan.findOne({ sellerId: req.user._id, buyerId: kyc.userId, status: { $in: ["requested", "approved", "active"] } });
+    if (!relatedLoan) return res.status(403).json({ message: "This buyer does not have an EMI request with your shop" });
     kyc.status = "rejected";
     kyc.rejectionReason = req.body.reason || "Rejected";
     kyc.reviewedBy = req.user._id;
@@ -125,7 +129,11 @@ router.patch(
   asyncHandler(async (req, res) => {
     const loan = await Loan.findOne({ _id: req.params.id, sellerId: req.user._id, status: "requested" });
     if (!loan) return res.status(404).json({ message: "Loan request not found" });
-    const kyc = await KYCDocument.findOne({ userId: loan.buyerId, sellerId: req.user._id, status: "approved" });
+    const kyc = await KYCDocument.findOne({
+      userId: loan.buyerId,
+      status: "approved",
+      $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }]
+    });
     if (!kyc) return res.status(400).json({ message: "Cannot approve EMI request. Buyer's KYC must be approved first." });
     const approvedLoan = await approveLoanRequest(req.params.id, req.user._id, req.user._id);
     res.json(approvedLoan);

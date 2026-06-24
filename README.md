@@ -7,7 +7,7 @@ Final-year MERN MVP for small businesses and micro-loan providers. It supports s
 - Frontend: React, Vite, React Router, TanStack Query, Recharts
 - Backend: Node.js, Express, MongoDB, Mongoose
 - Utilities: JWT auth, Multer uploads, node-cron reminders, PDFKit, ExcelJS
-- Demo integrations: mock OTP, mock SMS/email/in-app notifications, mock payment gateway
+- Demo integrations: mock OTP, mock SMS/email/in-app notifications, mock payment gateway, Stripe Checkout test payments
 
 ## Quick Start
 
@@ -46,7 +46,7 @@ npm run seed           # seed configured MongoDB
 - Admin approval/rejection for seller registration.
 - Seller dashboard with summary cards, products, offline loan creation, manual payment recording, overdue risk table, and exports.
 - Buyer marketplace with product browsing and EMI request submission.
-- Buyer portal with KYC uploads, loan list, and mock gateway payment.
+- Buyer portal with KYC uploads, loan list, Stripe Checkout payment, and mock gateway fallback.
 - EMI engine supporting flat, reducing balance, and zero-interest schedules.
 - Daily overdue/reminder job plus manual trigger from seller dashboard.
 - Audit logs for important actions.
@@ -59,11 +59,14 @@ npm run seed           # seed configured MongoDB
 - `POST /api/kyc`, `PATCH /api/kyc/:id/review`
 - `POST /api/loans/offline`, `POST /api/loans/requests`, `PATCH /api/loans/:id/approve`, `GET /api/loans`
 - `POST /api/payments/manual`, `POST /api/payments/mock-gateway`
+- `POST /api/payments/stripe/create-checkout-session`, `POST /api/payments/stripe/confirm-checkout-session`, `POST /api/payments/stripe/webhook`
 - `GET /api/reports/summary`, `GET /api/reports/collections`, `GET /api/reports/overdue`, `GET /api/reports/export`
 - `GET /api/notifications`
 
 ## Notes
 
 - Real bKash, Nagad, SSLCommerz, SMS, email, Google Drive, or S3 integrations can replace the mock services without changing route behavior.
+- Stripe runs in test mode from `server/.env`. Use card `4242 4242 4242 4242`, any future expiry, and any CVC for demo payments.
+- For local webhook testing, install the Stripe CLI and forward events to `http://localhost:5000/api/payments/stripe/webhook`, then set `STRIPE_WEBHOOK_SECRET`.
 - Uploaded files are stored under `server/uploads/` during development.
 - Production MongoDB should run as a replica set to support transactions.

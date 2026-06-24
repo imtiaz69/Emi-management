@@ -1,5 +1,6 @@
 const fs = require("fs");
 const express = require("express");
+const Loan = require("../models/Loan");
 const KYCDocument = require("../models/KYCDocument");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
@@ -56,11 +57,10 @@ router.get(
   authenticate,
   authorize("seller"),
   asyncHandler(async (req, res) => {
-    const Loan = require("../models/Loan");
     const requestedLoans = await Loan.find({ sellerId: req.user._id, status: "requested" }).distinct("buyerId");
     const docs = await KYCDocument.find({
       userId: { $in: requestedLoans },
-      sellerId: req.user._id,
+      $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }],
       status: "pending"
     })
       .populate("userId", "name email phone")
@@ -76,8 +76,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const doc = await KYCDocument.findOne({
       userId: req.params.buyerId,
-      sellerId: req.user._id,
-      status: "approved"
+      status: "approved",
+      $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }]
     });
     res.json({ approved: !!doc, document: doc });
   })
@@ -93,6 +93,17 @@ router.patch(
     if (doc.sellerId && doc.sellerId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to review this document" });
     }
+    const relatedLoan = await Loan.findOne({
+      sellerId: req.user._id,
+      buyerId: doc.userId,
+      status: { $in: ["requested", "approved", "active"] }
+    });
+    if (!relatedLoan) {
+      return res.status(403).json({ message: "This buyer does not have an EMI request with your shop" });
+    }
+    if (!["approved", "rejected"].includes(req.body.status)) {
+      return res.status(400).json({ message: "Review status must be approved or rejected" });
+    }
     doc.status = req.body.status;
     doc.rejectionReason = req.body.rejectionReason;
     doc.reviewedBy = req.user._id;
@@ -106,7 +117,9 @@ router.patch(
 
 async function uploadAndBuild(file, folder) {
   const result = await uploadFile(file.path, folder);
-  await fs.promises.unlink(file.path).catch(() => {});
+  if (!result.local) {
+    await fs.promises.unlink(file.path).catch(() => {});
+  }
   return {
     originalName: file.originalname,
     filename: file.filename,

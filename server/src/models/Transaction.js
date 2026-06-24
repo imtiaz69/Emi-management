@@ -7,7 +7,7 @@ const transactionSchema = new mongoose.Schema(
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     amount: { type: Number, required: true, min: 1 },
-    method: { type: String, enum: ["cash", "bank", "cheque", "bkash", "nagad", "sslcommerz", "mock_gateway"], required: true },
+    method: { type: String, enum: ["cash", "bank", "cheque", "bkash", "nagad", "sslcommerz", "mock_gateway", "stripe"], required: true },
     paymentDate: { type: Date, default: Date.now },
     gatewayRef: String,
     receiptNo: { type: String, unique: true },

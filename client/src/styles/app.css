@@ -60,6 +60,7 @@ main { padding: 24px; }
 }
 
 .button.danger { background: #b94343; }
+.button.ghost { background: #f2f6f5; color: #31524d; }
 .button.small { min-height: 34px; padding: 0 12px; }
 .button.tiny { min-height: 30px; padding: 0 10px; font-size: 0.84rem; }
 .button:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -122,6 +123,18 @@ input, select, textarea {
   padding: 9px 10px;
 }
 textarea { min-height: 76px; resize: vertical; margin-bottom: 12px; }
+.searchable-select {
+  align-content: start;
+}
+.choice-search {
+  min-height: 36px;
+  background: #f7faf7;
+}
+.field-note {
+  color: #8a560c;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
 .inline-check { display: flex; grid-template-columns: unset; align-items: center; gap: 8px; margin-bottom: 12px; }
 .inline-check input { width: 18px; min-height: 18px; }
 
@@ -151,6 +164,25 @@ th { color: #57706a; font-size: 0.82rem; text-transform: uppercase; }
 .button-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .hint { margin-top: 10px; font-size: 0.9rem; }
 .error { color: #a93333; background: #f8dddd; padding: 10px; border-radius: 7px; margin: 10px 0; }
+.form-error { color: #a93333; font-weight: 700; margin-top: 10px; }
+.muted { color: #667a75; font-size: 0.92rem; margin-bottom: 12px; }
+.notice {
+  border-radius: 8px;
+  border: 1px solid #d8e2df;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  font-weight: 700;
+}
+.notice.success {
+  background: #dff1e6;
+  color: #1b6a43;
+  border-color: #b9dfc8;
+}
+.notice.warning {
+  background: #fff0d8;
+  color: #8a560c;
+  border-color: #efcf94;
+}
 
 .auth-page {
   min-height: calc(100vh - 120px);
@@ -239,6 +271,27 @@ th { color: #57706a; font-size: 0.82rem; text-transform: uppercase; }
   display: block;
   padding: 6px 8px;
   background: #f7faf7;
+}
+.table-thumb {
+  width: 54px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #d8e2df;
+}
+.schedule-preview {
+  margin-top: 16px;
+  border: 1px solid #d8e2df;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f7faf7;
+}
+.schedule-preview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 12px;
+  color: #14524f;
 }
 .product-card h2 { display: block; margin-bottom: 8px; }
 .product-card p { min-height: 48px; }

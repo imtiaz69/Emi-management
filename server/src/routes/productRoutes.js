@@ -84,7 +84,9 @@ router.delete(
 
 async function uploadAndBuild(file, folder) {
   const result = await uploadFile(file.path, folder);
-  await fs.promises.unlink(file.path).catch(() => {});
+  if (!result.local) {
+    await fs.promises.unlink(file.path).catch(() => {});
+  }
   return {
     originalName: file.originalname,
     filename: file.filename,
