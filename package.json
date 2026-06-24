@@ -1,0 +1,28 @@
+{
+  "name": "emi-management",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MERN EMI management and loan tracking system for small businesses.",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client",
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "test": "npm test --prefix server",
+    "seed": "npm run seed --prefix server"
+  },
+  "keywords": [
+    "emi",
+    "loan",
+    "mern",
+    "microfinance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "mongodb": "^7.3.0"
+  }
+}
