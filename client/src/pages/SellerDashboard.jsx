@@ -58,7 +58,7 @@ export default function SellerDashboard() {
   const [productImages, setProductImages] = useState([]);
   const [loanForm, setLoanForm] = useState({ buyerId: "", productId: "", principal: "", downPayment: "0", interestRate: "12", interestType: "flat", tenureMonths: "6", lateFeeType: "daily", lateFeeValue: "20" });
   const [schedulePreview, setSchedulePreview] = useState(null);
-  const [paymentForm, setPaymentForm] = useState({ loanId: "", amount: "", method: "cash", notes: "" });
+  const [paymentForm, setPaymentForm] = useState({ loanId: "", amount: "", method: "cash", allocationMode: "next_due", notes: "" });
   const [kycRejectReason, setKycRejectReason] = useState("");
   const [loanDetailsModal, setLoanDetailsModal] = useState(null);
 
@@ -68,6 +68,7 @@ export default function SellerDashboard() {
   const payments = useQuery({ queryKey: ["payments"], queryFn: async () => (await api.get("/payments")).data });
   const buyers = useQuery({ queryKey: ["buyers-for-seller"], queryFn: async () => (await api.get("/users", { params: { role: "buyer", status: "active" } })).data });
   const pendingKyc = useQuery({ queryKey: ["pending-kyc"], queryFn: async () => (await api.get("/kyc/pending-for-seller")).data });
+  const applications = useQuery({ queryKey: ["emi-applications"], queryFn: async () => (await api.get("/emi-applications")).data });
   const overdue = useQuery({ queryKey: ["overdue"], queryFn: async () => (await api.get("/reports/overdue")).data });
   const collections = useQuery({ queryKey: ["collections"], queryFn: async () => (await api.get("/reports/collections")).data });
 
@@ -75,6 +76,14 @@ export default function SellerDashboard() {
   const activeProducts = useMemo(() => (products.data || []).filter((product) => product.status === "active"), [products.data]);
   const requestedLoans = (loans.data || []).filter((loan) => loan.status === "requested");
   const requestedCount = requestedLoans.length;
+  const applicationByLoanId = useMemo(() => {
+    const map = new Map();
+    (applications.data || []).forEach((application) => {
+      const loanId = application.loanId?._id || application.loanId;
+      if (loanId) map.set(loanId, application);
+    });
+    return map;
+  }, [applications.data]);
   const overviewChartData = [
     { label: "Total sales", amount: summary.data?.totalSales || 0 },
     { label: "Collection", amount: summary.data?.totalCollection || 0 },
@@ -139,7 +148,7 @@ export default function SellerDashboard() {
   const recordPayment = useMutation({
     mutationFn: async () => api.post("/payments/manual", { ...paymentForm, amount: Number(paymentForm.amount) }),
     onSuccess: () => {
-      setPaymentForm({ loanId: "", amount: "", method: "cash", notes: "" });
+      setPaymentForm({ loanId: "", amount: "", method: "cash", allocationMode: "next_due", notes: "" });
       refreshData();
       alert("Payment recorded successfully.");
     },
@@ -201,6 +210,7 @@ export default function SellerDashboard() {
       queryClient.invalidateQueries({ queryKey: ["payments"] }),
       queryClient.invalidateQueries({ queryKey: ["buyers-for-seller"] }),
       queryClient.invalidateQueries({ queryKey: ["pending-kyc"] }),
+      queryClient.invalidateQueries({ queryKey: ["emi-applications"] }),
       queryClient.invalidateQueries({ queryKey: ["overdue"] }),
       queryClient.invalidateQueries({ queryKey: ["collections"] })
     ]);
@@ -359,16 +369,18 @@ export default function SellerDashboard() {
                       <th>Principal</th>
                       <th>Down payment</th>
                       <th>Terms</th>
+                      <th>Risk</th>
                       <th>KYC</th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {requestedLoans.length === 0 ? (
-                      <tr><td colSpan="7" style={{ textAlign: "center", color: "#888" }}>No online EMI requests pending.</td></tr>
+                      <tr><td colSpan="8" style={{ textAlign: "center", color: "#888" }}>No online EMI requests pending.</td></tr>
                     ) : (
                       requestedLoans.map((loan) => {
                         const kycDoc = kycByBuyerId.get(loan.buyerId?._id);
+                        const application = applicationByLoanId.get(loan._id);
                         return (
                           <tr key={loan._id}>
                             <td>
@@ -379,6 +391,7 @@ export default function SellerDashboard() {
                             <td>BDT {loan.principal}</td>
                             <td>BDT {loan.downPayment}</td>
                             <td>{loan.tenureMonths} months, {loan.interestRate}% {loan.interestType}</td>
+                            <td>{application ? `${application.riskScoreSnapshot} / ${application.riskCategorySnapshot}` : "-"}</td>
                             <td>
                               {kycDoc ? (
                                 <StatusBadge status={kycDoc.status} />
@@ -539,6 +552,14 @@ export default function SellerDashboard() {
                     <option value="cash">Cash</option>
                     <option value="bank">Bank transfer</option>
                     <option value="cheque">Cheque</option>
+                  </select>
+                </label>
+                <label>Allocation mode
+                  <select value={paymentForm.allocationMode} onChange={(e) => setPaymentForm({ ...paymentForm, allocationMode: e.target.value })}>
+                    <option value="next_due">Next installment only</option>
+                    <option value="overdue">Overdue balance only</option>
+                    <option value="advance">Advance against all open installments</option>
+                    <option value="custom">Custom amount</option>
                   </select>
                 </label>
                 <label>Payment notes

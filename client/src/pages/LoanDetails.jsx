@@ -1,19 +1,33 @@
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api } from "../api/http";
 import StatusBadge from "../components/StatusBadge.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function LoanDetails() {
   const { id } = useParams();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const scheduleQuery = useQuery({
     queryKey: ["loan-schedule", id],
     queryFn: async () => (await api.get(`/loans/${id}/schedule`)).data,
     enabled: Boolean(id)
   });
+  const agreementQuery = useQuery({
+    queryKey: ["loan-agreement", id],
+    queryFn: async () => (await api.get(`/loans/${id}/agreement`)).data,
+    enabled: Boolean(id)
+  });
+  const acceptAgreement = useMutation({
+    mutationFn: async () => api.patch(`/loans/${id}/agreement/accept`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["loan-agreement", id] })
+  });
 
   const schedule = scheduleQuery.data || [];
   const firstRow = schedule[0] || {};
+  const agreement = agreementQuery.data;
+  const acceptedForRole = user?.role === "buyer" ? agreement?.acceptedByBuyerAt : user?.role === "seller" ? agreement?.acceptedBySellerAt : true;
 
   return (
     <section className="dashboard">
@@ -45,6 +59,32 @@ export default function LoanDetails() {
           </div>
         </div>
       </section>
+
+      {agreement && (
+        <section className="panel">
+          <h2>Loan agreement</h2>
+          <div className="form-grid compact">
+            <div>
+              <strong>Agreement no</strong>
+              <p>{agreement.agreementNo}</p>
+            </div>
+            <div>
+              <strong>Buyer acceptance</strong>
+              <p>{agreement.acceptedByBuyerAt ? dayjs(agreement.acceptedByBuyerAt).format("DD MMM YYYY, h:mm A") : "Pending"}</p>
+            </div>
+            <div>
+              <strong>Seller acceptance</strong>
+              <p>{agreement.acceptedBySellerAt ? dayjs(agreement.acceptedBySellerAt).format("DD MMM YYYY, h:mm A") : "Pending"}</p>
+            </div>
+          </div>
+          <pre className="agreement-terms">{agreement.terms}</pre>
+          {["buyer", "seller"].includes(user?.role) && (
+            <button className="button" disabled={Boolean(acceptedForRole) || acceptAgreement.isPending} onClick={() => acceptAgreement.mutate()}>
+              {acceptedForRole ? "Agreement accepted" : "Accept agreement"}
+            </button>
+          )}
+        </section>
+      )}
 
       <section className="panel">
         <h2>Installment schedule</h2>

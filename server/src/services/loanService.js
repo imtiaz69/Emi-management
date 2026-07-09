@@ -4,9 +4,72 @@ const Loan = require("../models/Loan");
 const EMISchedule = require("../models/EMISchedule");
 const Transaction = require("../models/Transaction");
 const Order = require("../models/Order");
+const EMIApplication = require("../models/EMIApplication");
 const { calculateSchedule, roundMoney } = require("./emiService");
 const { writeAudit } = require("./auditService");
 const { convertReservationToSale } = require("./inventoryService");
+const { ensureLoanAgreement } = require("./agreementService");
+const { calculateBuyerRiskProfile } = require("./riskService");
+
+function buildReceiptNo(prefix = "R") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+async function createApplicationForLoan(loan, session) {
+  const risk = await calculateBuyerRiskProfile({
+    buyerId: loan.buyerId,
+    principal: loan.principal,
+    downPayment: loan.downPayment,
+    session
+  });
+  const kycPending = risk.inputs?.kycUploaded ? "under_review" : "kyc_pending";
+  const [application] = await EMIApplication.create(
+    [
+      {
+        buyerId: loan.buyerId,
+        sellerId: loan.sellerId,
+        orderId: loan.orderId,
+        orderItemId: loan.orderItemId,
+        productId: loan.productId,
+        loanId: loan._id,
+        requestedPrincipal: loan.principal,
+        downPayment: loan.downPayment,
+        tenureMonths: loan.tenureMonths,
+        interestRate: loan.interestRate,
+        interestType: loan.interestType,
+        status: kycPending,
+        riskScoreSnapshot: risk.riskScore,
+        riskCategorySnapshot: risk.riskCategory
+      }
+    ],
+    { session }
+  );
+  return application;
+}
+
+async function recordDownPayment({ loan, orderId, amount, method = "cash", actorId, session, notes = "Down payment" }) {
+  if (!Number(amount || 0)) return null;
+  const [transaction] = await Transaction.create(
+    [
+      {
+        loanId: loan._id,
+        orderId,
+        transactionType: "down_payment",
+        buyerId: loan.buyerId,
+        sellerId: loan.sellerId,
+        amount,
+        method,
+        paymentDate: new Date(),
+        receiptNo: buildReceiptNo("DP"),
+        recordedBy: actorId,
+        notes,
+        status: "confirmed"
+      }
+    ],
+    { session }
+  );
+  return transaction;
+}
 
 async function createLoanWithSchedule(payload, actorId, { requested = false } = {}) {
   const session = await mongoose.startSession();
@@ -66,6 +129,25 @@ async function createLoanWithSchedule(payload, actorId, { requested = false } = 
         })),
         { session }
       );
+      await recordDownPayment({
+        loan,
+        amount: Number(payload.downPayment || 0),
+        method: payload.downPaymentMethod || "cash",
+        actorId,
+        session,
+        notes: "Offline loan down payment"
+      });
+      await ensureLoanAgreement(loan, { session });
+    } else {
+      await createApplicationForLoan(loan, session);
+      await recordDownPayment({
+        loan,
+        amount: Number(payload.downPayment || 0),
+        method: payload.downPaymentMethod || "mock_gateway",
+        actorId,
+        session,
+        notes: "Online EMI request down payment"
+      });
     }
 
     await writeAudit(actorId, requested ? "loan.requested" : "loan.created", "Loan", loan._id, { source: loan.source }, { session });
@@ -119,6 +201,12 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
     loan.approvedAt = new Date();
     loan.activatedAt = new Date();
     await loan.save({ session });
+    const risk = await calculateBuyerRiskProfile({ buyerId: loan.buyerId, principal: loan.principal, downPayment: loan.downPayment, session });
+    await EMIApplication.findOneAndUpdate(
+      { loanId: loan._id },
+      { status: "converted_to_loan", riskScoreSnapshot: risk.riskScore, riskCategorySnapshot: risk.riskCategory },
+      { session }
+    );
 
     await EMISchedule.insertMany(
       result.schedule.map((row) => ({
@@ -129,6 +217,7 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
       })),
       { session }
     );
+    await ensureLoanAgreement(loan, { session });
 
     await writeAudit(actorId, "loan.approved", "Loan", loan._id, {}, { session });
     await session.commitTransaction();
@@ -142,7 +231,7 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
 }
 
 async function recordPayment(
-  { loanId, amount, method, paymentDate, scheduleId, gatewayRef, notes },
+  { loanId, amount, method, paymentDate, scheduleId, gatewayRef, notes, allocationMode = "advance" },
   actorId,
   { requireSellerOwnership = false, requireBuyerOwnership = false } = {}
 ) {
@@ -169,12 +258,21 @@ async function recordPayment(
       throw error;
     }
 
-    const schedulesQuery = scheduleId ? { _id: scheduleId, loanId } : { loanId, status: { $in: ["pending", "partial", "overdue"] } };
+    const payableStatuses = ["pending", "partial", "overdue"];
+    const schedulesQuery = scheduleId ? { _id: scheduleId, loanId } : { loanId, status: { $in: payableStatuses } };
+    if (!scheduleId && allocationMode === "overdue") schedulesQuery.status = "overdue";
     const schedules = await EMISchedule.find(schedulesQuery).sort({ dueDate: 1 }).session(session);
     if (!schedules.length) throw new Error("No payable schedule found");
+    const allocationSchedules = !scheduleId && allocationMode === "next_due" ? schedules.slice(0, 1) : schedules;
+    const outstanding = allocationSchedules.reduce((sum, schedule) => sum + Math.max(roundMoney(schedule.amountDue + schedule.lateFee - schedule.amountPaid), 0), 0);
+    if (remaining > outstanding) {
+      const error = new Error(`Payment cannot exceed selected outstanding amount BDT ${Math.round(outstanding)}`);
+      error.status = 400;
+      throw error;
+    }
 
-    let lastScheduleId = schedules[0]._id;
-    for (const schedule of schedules) {
+    let lastScheduleId = allocationSchedules[0]._id;
+    for (const schedule of allocationSchedules) {
       if (remaining <= 0) break;
       const due = roundMoney(schedule.amountDue + schedule.lateFee - schedule.amountPaid);
       const applied = Math.min(remaining, due);
@@ -186,12 +284,13 @@ async function recordPayment(
       lastScheduleId = schedule._id;
     }
 
-    const receiptNo = `R-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const receiptNo = buildReceiptNo("R");
     const transaction = await Transaction.create(
       [
         {
           loanId,
           scheduleId: scheduleId || lastScheduleId,
+          transactionType: "installment",
           buyerId: loan.buyerId,
           sellerId: loan.sellerId,
           amount,
@@ -200,7 +299,8 @@ async function recordPayment(
           gatewayRef,
           receiptNo,
           recordedBy: actorId,
-          notes
+          notes,
+          status: "confirmed"
         }
       ],
       { session }
@@ -223,4 +323,4 @@ async function recordPayment(
   }
 }
 
-module.exports = { createLoanWithSchedule, approveLoanRequest, recordPayment };
+module.exports = { buildReceiptNo, createApplicationForLoan, createLoanWithSchedule, approveLoanRequest, recordDownPayment, recordPayment };

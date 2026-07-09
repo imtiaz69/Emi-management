@@ -3,6 +3,7 @@ const path = require("path");
 const express = require("express");
 const Loan = require("../models/Loan");
 const KYCDocument = require("../models/KYCDocument");
+const KYCReview = require("../models/KYCReview");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { createUploader } = require("../middleware/upload");
@@ -68,10 +69,12 @@ router.get(
   authorize("seller"),
   asyncHandler(async (req, res) => {
     const requestedLoans = await Loan.find({ sellerId: req.user._id, status: "requested" }).distinct("buyerId");
+    const reviewedIds = await KYCReview.find({ sellerId: req.user._id, reviewerRole: "seller" }).distinct("kycDocumentId");
     const docs = await KYCDocument.find({
       userId: { $in: requestedLoans },
+      _id: { $nin: reviewedIds },
       $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }],
-      status: "pending"
+      status: { $in: ["pending", "approved"] }
     })
       .populate("userId", "name email phone")
       .sort({ createdAt: -1 });
@@ -84,12 +87,15 @@ router.get(
   authenticate,
   authorize("seller"),
   asyncHandler(async (req, res) => {
-    const doc = await KYCDocument.findOne({
-      userId: req.params.buyerId,
-      status: "approved",
-      $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }]
+    const doc = await KYCDocument.findOne({ userId: req.params.buyerId }).sort({ createdAt: -1 });
+    const sellerReview = doc
+      ? await KYCReview.findOne({ kycDocumentId: doc._id, reviewerRole: "seller", sellerId: req.user._id }).sort({ reviewedAt: -1 })
+      : null;
+    res.json({
+      approved: doc?.status === "approved" || sellerReview?.status === "approved",
+      document: doc ? sanitizeKycDocument(doc) : null,
+      sellerReview
     });
-    res.json({ approved: !!doc, document: doc ? sanitizeKycDocument(doc) : null });
   })
 );
 
@@ -136,6 +142,17 @@ router.patch(
     doc.reviewedBy = req.user._id;
     doc.reviewedAt = new Date();
     await doc.save();
+    await KYCReview.findOneAndUpdate(
+      { kycDocumentId: doc._id, reviewerRole: "admin" },
+      {
+        reviewerId: req.user._id,
+        reviewerRole: "admin",
+        status: req.body.status,
+        rejectionReason: req.body.status === "rejected" ? doc.rejectionReason : undefined,
+        reviewedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
     await writeAudit(req.user._id, `kyc.admin.${doc.status}`, "KYCDocument", doc._id);
     res.json(sanitizeKycDocument(doc));
   })
@@ -149,9 +166,6 @@ router.patch(
   asyncHandler(async (req, res) => {
     const doc = await KYCDocument.findById(req.params.id);
     if (!doc) return res.status(404).json({ message: "KYC document not found" });
-    if (doc.sellerId && doc.sellerId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Not authorized to review this document" });
-    }
     const relatedLoan = await Loan.findOne({
       sellerId: req.user._id,
       buyerId: doc.userId,
@@ -160,14 +174,21 @@ router.patch(
     if (!relatedLoan) {
       return res.status(403).json({ message: "This buyer does not have an EMI request with your shop" });
     }
-    doc.status = req.body.status;
-    doc.rejectionReason = req.body.status === "rejected" ? req.body.rejectionReason || "Rejected by seller" : undefined;
-    doc.reviewedBy = req.user._id;
-    doc.reviewedAt = new Date();
-    doc.sellerId = req.user._id;
-    await doc.save();
-    await writeAudit(req.user._id, `kyc.${doc.status}`, "KYCDocument", doc._id);
-    res.json(sanitizeKycDocument(doc));
+    const review = await KYCReview.findOneAndUpdate(
+      { kycDocumentId: doc._id, reviewerRole: "seller", sellerId: req.user._id },
+      {
+        kycDocumentId: doc._id,
+        reviewerId: req.user._id,
+        reviewerRole: "seller",
+        sellerId: req.user._id,
+        status: req.body.status,
+        rejectionReason: req.body.status === "rejected" ? req.body.rejectionReason || "Rejected by seller" : undefined,
+        reviewedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+    await writeAudit(req.user._id, `kyc.seller.${review.status}`, "KYCReview", review._id, { kycDocumentId: doc._id });
+    res.json({ ...sanitizeKycDocument(doc), sellerReview: review });
   })
 );
 

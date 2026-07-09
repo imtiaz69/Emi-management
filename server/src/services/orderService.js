@@ -8,6 +8,8 @@ const Shipment = require("../models/Shipment");
 const { calculateSchedule } = require("./emiService");
 const { convertReservationToSale, releaseReservation, reserveStock } = require("./inventoryService");
 const { writeAudit } = require("./auditService");
+const { assertBuyerReadyForEmi } = require("./buyerReadinessService");
+const { createApplicationForLoan, recordDownPayment } = require("./loanService");
 
 function buildOrderNo() {
   return `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -56,6 +58,9 @@ async function createOrderFromCart({ buyerId, shippingAddress, billingAddress, c
         totalPrice: product.price * cartItem.quantity,
         financeMode: cartItem.selectedFinanceMode
       });
+    }
+    if (orderItems.some((item) => item.financeMode === "emi")) {
+      await assertBuyerReadyForEmi(buyerId, { session });
     }
 
     const subtotal = orderItems.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -118,7 +123,7 @@ async function createRequestedLoansForEmiItems(order, emi, session) {
   if (!emiItems.length) return;
 
   const totalEmiPrincipal = emiItems.reduce((sum, item) => sum + item.totalPrice, 0);
-  const requestedDownPayment = Math.min(Number(emi.downPayment || 0), totalEmiPrincipal - 1);
+    const requestedDownPayment = Math.min(Number(emi.downPayment || 0), totalEmiPrincipal - 1);
   const downPaymentRatio = totalEmiPrincipal > 0 ? requestedDownPayment / totalEmiPrincipal : 0;
 
   for (const item of emiItems) {
@@ -152,6 +157,17 @@ async function createRequestedLoansForEmiItems(order, emi, session) {
       ],
       { session }
     ).then((docs) => docs[0]);
+
+    await createApplicationForLoan(loan, session);
+    await recordDownPayment({
+      loan,
+      orderId: order._id,
+      amount: downPayment,
+      method: emi.downPaymentMethod || "mock_gateway",
+      actorId: order.buyerId,
+      session,
+      notes: `Online EMI down payment for order ${order.orderNo}`
+    });
 
     item.loanId = loan._id;
   }

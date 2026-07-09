@@ -1,13 +1,18 @@
 const express = require("express");
 const Loan = require("../models/Loan");
 const EMISchedule = require("../models/EMISchedule");
+const EMIApplication = require("../models/EMIApplication");
 const KYCDocument = require("../models/KYCDocument");
+const KYCReview = require("../models/KYCReview");
+const LoanAgreement = require("../models/LoanAgreement");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
 const { objectId, optionalObjectId, validateBody, z } = require("../middleware/validate");
 const { calculateSchedule } = require("../services/emiService");
 const { approveLoanRequest, createLoanWithSchedule } = require("../services/loanService");
 const { writeAudit } = require("../services/auditService");
+const { assertBuyerReadyForEmi } = require("../services/buyerReadinessService");
+const { ensureLoanAgreement } = require("../services/agreementService");
 
 const router = express.Router();
 const lateFeePolicySchema = z.object({
@@ -46,8 +51,9 @@ router.get(
     if (req.user.role === "seller") filter.sellerId = req.user._id;
     if (req.user.role === "buyer") filter.buyerId = req.user._id;
     if (req.query.status) filter.status = req.query.status;
-    const loans = await Loan.find(filter).populate("buyerId", "name email phone").populate("sellerId", "name phone").populate("productId", "name price").sort({ createdAt: -1 });
-    res.json(loans);
+    const loans = await Loan.find(filter).populate("buyerId", "name email phone").populate("sellerId", "name phone").populate("productId", "name price").sort({ createdAt: -1 }).lean();
+    const enrichedLoans = await Promise.all(loans.map(async (loan) => ({ ...loan, paymentSummary: await buildPaymentSummary(loan._id) })));
+    res.json(enrichedLoans);
   })
 );
 
@@ -59,8 +65,40 @@ router.get(
     if (!loan) return res.status(404).json({ message: "Loan not found" });
     if (req.user.role === "buyer" && loan.buyerId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Forbidden" });
     if (req.user.role === "seller" && loan.sellerId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Forbidden" });
-    const schedule = await EMISchedule.find({ loanId: loan._id }).sort({ installmentNo: 1 });
+    const schedule = await EMISchedule.find({ loanId: loan._id }).populate("buyerId", "name phone email").populate("sellerId", "name phone email").sort({ installmentNo: 1 });
     res.json(schedule);
+  })
+);
+
+router.get(
+  "/:id/agreement",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const loan = await Loan.findById(req.params.id);
+    if (!loan) return res.status(404).json({ message: "Loan not found" });
+    if (req.user.role === "buyer" && loan.buyerId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role === "seller" && loan.sellerId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Forbidden" });
+    if (!["active", "closed"].includes(loan.status)) return res.status(400).json({ message: "Agreement is available after loan approval" });
+    const agreement = await ensureLoanAgreement(loan);
+    res.json(agreement);
+  })
+);
+
+router.patch(
+  "/:id/agreement/accept",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const loan = await Loan.findById(req.params.id);
+    if (!loan) return res.status(404).json({ message: "Loan not found" });
+    if (req.user.role === "buyer" && loan.buyerId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role === "seller" && loan.sellerId.toString() !== req.user._id.toString()) return res.status(403).json({ message: "Forbidden" });
+    if (!["buyer", "seller"].includes(req.user.role)) return res.status(403).json({ message: "Only buyer or seller can accept an agreement" });
+    const agreement = await ensureLoanAgreement(loan);
+    if (req.user.role === "buyer") agreement.acceptedByBuyerAt = new Date();
+    if (req.user.role === "seller") agreement.acceptedBySellerAt = new Date();
+    await agreement.save();
+    await writeAudit(req.user._id, `loanAgreement.accepted.${req.user.role}`, "LoanAgreement", agreement._id, { loanId: loan._id });
+    res.json(agreement);
   })
 );
 
@@ -91,6 +129,7 @@ router.post(
   authorize("buyer"),
   validateBody(marketplaceLoanRequestSchema),
   asyncHandler(async (req, res) => {
+    await assertBuyerReadyForEmi(req.user._id);
     const loan = await createLoanWithSchedule({ ...req.body, buyerId: req.user._id, source: "marketplace" }, req.user._id, { requested: true });
     res.status(201).json(loan);
   })
@@ -122,13 +161,13 @@ router.post(
     if (!kyc) return res.status(404).json({ message: "KYC not found" });
     const relatedLoan = await Loan.findOne({ sellerId: req.user._id, buyerId: kyc.userId, status: { $in: ["requested", "approved", "active"] } });
     if (!relatedLoan) return res.status(403).json({ message: "This buyer does not have an EMI request with your shop" });
-    kyc.status = "approved";
-    kyc.reviewedBy = req.user._id;
-    kyc.reviewedAt = new Date();
-    kyc.sellerId = req.user._id;
-    await kyc.save();
-    await writeAudit(req.user._id, "kyc.approved", "KYCDocument", kyc._id);
-    res.json(sanitizeKycDocument(kyc));
+    const review = await KYCReview.findOneAndUpdate(
+      { kycDocumentId: kyc._id, reviewerRole: "seller", sellerId: req.user._id },
+      { kycDocumentId: kyc._id, reviewerId: req.user._id, reviewerRole: "seller", sellerId: req.user._id, status: "approved", reviewedAt: new Date() },
+      { upsert: true, new: true }
+    );
+    await writeAudit(req.user._id, "kyc.seller.approved", "KYCReview", review._id, { kycDocumentId: kyc._id });
+    res.json({ ...sanitizeKycDocument(kyc), sellerReview: review });
   })
 );
 
@@ -141,14 +180,21 @@ router.post(
     if (!kyc) return res.status(404).json({ message: "KYC not found" });
     const relatedLoan = await Loan.findOne({ sellerId: req.user._id, buyerId: kyc.userId, status: { $in: ["requested", "approved", "active"] } });
     if (!relatedLoan) return res.status(403).json({ message: "This buyer does not have an EMI request with your shop" });
-    kyc.status = "rejected";
-    kyc.rejectionReason = req.body.reason || "Rejected";
-    kyc.reviewedBy = req.user._id;
-    kyc.reviewedAt = new Date();
-    kyc.sellerId = req.user._id;
-    await kyc.save();
-    await writeAudit(req.user._id, "kyc.rejected", "KYCDocument", kyc._id);
-    res.json(sanitizeKycDocument(kyc));
+    const review = await KYCReview.findOneAndUpdate(
+      { kycDocumentId: kyc._id, reviewerRole: "seller", sellerId: req.user._id },
+      {
+        kycDocumentId: kyc._id,
+        reviewerId: req.user._id,
+        reviewerRole: "seller",
+        sellerId: req.user._id,
+        status: "rejected",
+        rejectionReason: req.body.reason || "Rejected",
+        reviewedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+    await writeAudit(req.user._id, "kyc.seller.rejected", "KYCReview", review._id, { kycDocumentId: kyc._id });
+    res.json({ ...sanitizeKycDocument(kyc), sellerReview: review });
   })
 );
 
@@ -176,6 +222,19 @@ function sanitizeKycDocument(doc) {
   };
 }
 
+async function buildPaymentSummary(loanId) {
+  const payableRows = await EMISchedule.find({ loanId, status: { $in: ["pending", "partial", "overdue"] } }).sort({ dueDate: 1 }).lean();
+  const balances = payableRows.map((row) => ({
+    ...row,
+    balance: Math.max(Number(row.amountDue || 0) + Number(row.lateFee || 0) - Number(row.amountPaid || 0), 0)
+  }));
+  return {
+    nextDueAmount: balances[0]?.balance || 0,
+    overdueAmount: balances.filter((row) => row.status === "overdue").reduce((sum, row) => sum + row.balance, 0),
+    outstandingAmount: balances.reduce((sum, row) => sum + row.balance, 0)
+  };
+}
+
 router.patch(
   "/:id/approve",
   authenticate,
@@ -185,12 +244,9 @@ router.patch(
   asyncHandler(async (req, res) => {
     const loan = await Loan.findOne({ _id: req.params.id, sellerId: req.user._id, status: "requested" });
     if (!loan) return res.status(404).json({ message: "Loan request not found" });
-    const kyc = await KYCDocument.findOne({
-      userId: loan.buyerId,
-      status: "approved",
-      $or: [{ sellerId: req.user._id }, { sellerId: { $exists: false } }, { sellerId: null }]
-    });
-    if (!kyc) return res.status(400).json({ message: "Cannot approve EMI request. Buyer's KYC must be approved first." });
+    const kyc = await KYCDocument.findOne({ userId: loan.buyerId }).sort({ createdAt: -1 });
+    const sellerReview = kyc ? await KYCReview.findOne({ kycDocumentId: kyc._id, reviewerRole: "seller", sellerId: req.user._id, status: "approved" }) : null;
+    if (!kyc || (kyc.status !== "approved" && !sellerReview)) return res.status(400).json({ message: "Cannot approve EMI request. Buyer's KYC must be approved by admin or this seller first." });
     const approvedLoan = await approveLoanRequest(req.params.id, req.user._id, req.user._id);
     res.json(approvedLoan);
   })
@@ -208,6 +264,7 @@ router.patch(
       { new: true }
     );
     if (!loan) return res.status(404).json({ message: "Loan request not found" });
+    await EMIApplication.findOneAndUpdate({ loanId: loan._id }, { status: "rejected", rejectionReason: req.body.reason || "Rejected by seller" });
     res.json(loan);
   })
 );

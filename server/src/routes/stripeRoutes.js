@@ -11,7 +11,8 @@ const { recordPayment } = require("../services/loanService");
 const router = express.Router();
 const createCheckoutSessionSchema = z.object({
   loanId: objectId,
-  amount: z.coerce.number().min(1)
+  amount: z.coerce.number().min(1),
+  allocationMode: z.enum(["next_due", "overdue", "advance", "custom"]).optional().default("advance")
 });
 const confirmCheckoutSessionSchema = z.object({
   sessionId: z.string().trim().min(5).max(300)
@@ -54,6 +55,7 @@ async function recordStripeCheckoutPayment(session) {
       loanId: session.metadata.loanId,
       amount: Number(session.metadata.amountBdt),
       method: "stripe",
+      allocationMode: session.metadata.allocationMode || "advance",
       gatewayRef,
       notes: "Stripe Checkout payment"
     },
@@ -68,7 +70,7 @@ router.post(
   authorize("buyer"),
   validateBody(createCheckoutSessionSchema),
   asyncHandler(async (req, res) => {
-    const { loanId } = req.body;
+    const { loanId, allocationMode } = req.body;
     const amount = Number(req.body.amount);
     if (!loanId || !Number.isFinite(amount) || amount < 1) {
       const error = new Error("Loan ID and a valid payment amount are required");
@@ -118,7 +120,8 @@ router.post(
       metadata: {
         loanId: loan._id.toString(),
         buyerId: req.user._id.toString(),
-        amountBdt: String(Math.round(amount))
+        amountBdt: String(Math.round(amount)),
+        allocationMode
       }
     });
 

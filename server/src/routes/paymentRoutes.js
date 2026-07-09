@@ -7,11 +7,13 @@ const { recordPayment } = require("../services/loanService");
 const { createMockGatewayReference } = require("../services/paymentService");
 
 const router = express.Router();
+const allocationModeSchema = z.enum(["next_due", "overdue", "advance", "custom"]).optional().default("advance");
 const manualPaymentSchema = z.object({
   loanId: objectId,
   scheduleId: optionalObjectId,
   amount: z.coerce.number().min(1),
   method: z.enum(["cash", "bank", "cheque", "bkash", "nagad", "sslcommerz"]),
+  allocationMode: allocationModeSchema,
   paymentDate: z.coerce.date().optional(),
   gatewayRef: z.string().trim().max(120).optional(),
   notes: z.string().trim().max(500).optional().default("")
@@ -20,6 +22,7 @@ const mockPaymentSchema = z.object({
   loanId: objectId,
   scheduleId: optionalObjectId,
   amount: z.coerce.number().min(1),
+  allocationMode: allocationModeSchema,
   method: z.enum(["mock_gateway"]).optional(),
   notes: z.string().trim().max(500).optional().default("")
 });
