@@ -5,6 +5,8 @@ const loanSchema = new mongoose.Schema(
     sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
+    orderItemId: { type: mongoose.Schema.Types.ObjectId },
     source: { type: String, enum: ["offline", "marketplace"], default: "offline" },
     principal: { type: Number, required: true, min: 0 },
     downPayment: { type: Number, default: 0, min: 0 },

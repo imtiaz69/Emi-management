@@ -13,3 +13,16 @@ api.interceptors.request.use((config) => {
 export function downloadUrl(path) {
   return `${import.meta.env.VITE_SERVER_URL || ""}${path}`;
 }
+
+export async function openProtectedFile(path) {
+  const tab = window.open("", "_blank");
+  if (tab) tab.opener = null;
+  const response = await api.get(path, { responseType: "blob" });
+  const blobUrl = URL.createObjectURL(response.data);
+  if (tab) {
+    tab.location.href = blobUrl;
+  } else {
+    window.location.href = blobUrl;
+  }
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+}

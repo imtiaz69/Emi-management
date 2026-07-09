@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, ShoppingBag } from "lucide-react";
@@ -6,14 +6,15 @@ import { api } from "../api/http";
 import { useAuth } from "../context/AuthContext.jsx";
 
 export default function Home() {
-  const { logout, user } = useAuth();
+  const { user } = useAuth();
   const [q, setQ] = useState("");
-
-  useEffect(() => {
-    if (user) {
-      logout();
-    }
-  }, [logout, user]);
+  const roleAction = user?.role === "admin"
+    ? { label: "Go to Admin Panel", to: "/admin" }
+    : user?.role === "seller"
+      ? { label: user.status === "active" ? "Go to Seller Dashboard" : "Check seller approval", to: user.status === "active" ? "/seller" : "/seller/pending" }
+      : user?.role === "buyer"
+        ? { label: "Go to Buyer Portal", to: "/buyer" }
+        : null;
 
   const products = useQuery({
     queryKey: ["marketplace", q],
@@ -34,12 +35,20 @@ export default function Home() {
             <Link className="button" to="/marketplace">
               Browse products
             </Link>
-            <Link className="button secondary" to="/register?role=buyer">
-              Register as buyer
-            </Link>
-            <Link className="button secondary" to="/register?role=seller">
-              Register as seller
-            </Link>
+            {roleAction ? (
+              <Link className="button secondary" to={roleAction.to}>
+                {roleAction.label}
+              </Link>
+            ) : (
+              <>
+                <Link className="button secondary" to="/register?role=buyer">
+                  Register as buyer
+                </Link>
+                <Link className="button secondary" to="/register?role=seller">
+                  Register as seller
+                </Link>
+              </>
+            )}
           </div>
         </div>
         <div className="hero-banner">
@@ -77,8 +86,8 @@ export default function Home() {
               <span>{product.stock} in stock</span>
             </div>
             <div className="button-row">
-              <Link className="button small" to="/marketplace">
-                View in marketplace
+              <Link className="button small" to={`/products/${product._id}`}>
+                View details
               </Link>
               {product.emiAvailable ? <span className="badge active">EMI available</span> : <span className="badge">Cash only</span>}
             </div>

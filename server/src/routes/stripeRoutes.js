@@ -5,9 +5,17 @@ const EMISchedule = require("../models/EMISchedule");
 const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
+const { objectId, validateBody, z } = require("../middleware/validate");
 const { recordPayment } = require("../services/loanService");
 
 const router = express.Router();
+const createCheckoutSessionSchema = z.object({
+  loanId: objectId,
+  amount: z.coerce.number().min(1)
+});
+const confirmCheckoutSessionSchema = z.object({
+  sessionId: z.string().trim().min(5).max(300)
+});
 
 function getStripeClient() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -49,7 +57,8 @@ async function recordStripeCheckoutPayment(session) {
       gatewayRef,
       notes: "Stripe Checkout payment"
     },
-    session.metadata.buyerId
+    session.metadata.buyerId,
+    { requireBuyerOwnership: true }
   );
 }
 
@@ -57,6 +66,7 @@ router.post(
   "/create-checkout-session",
   authenticate,
   authorize("buyer"),
+  validateBody(createCheckoutSessionSchema),
   asyncHandler(async (req, res) => {
     const { loanId } = req.body;
     const amount = Number(req.body.amount);
@@ -120,6 +130,7 @@ router.post(
   "/confirm-checkout-session",
   authenticate,
   authorize("buyer"),
+  validateBody(confirmCheckoutSessionSchema),
   asyncHandler(async (req, res) => {
     if (!req.body.sessionId) {
       const error = new Error("Stripe session ID is required");

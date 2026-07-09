@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, ShoppingBag } from "lucide-react";
 import { api } from "../api/http";
@@ -54,9 +55,12 @@ export default function Marketplace() {
               <strong>BDT {product.price}</strong>
               <span>{product.stock} in stock</span>
             </div>
-            <button className="button" disabled={!user || user.role !== "buyer" || !product.emiAvailable} onClick={() => setSelected(product)}>
-              Request EMI
-            </button>
+            <div className="button-row">
+              <Link className="button" to={`/products/${product._id}`}>View details</Link>
+              <button className="button secondary" disabled={!user || user.role !== "buyer" || !product.emiAvailable} onClick={() => setSelected(product)}>
+                Quick EMI
+              </button>
+            </div>
           </article>
         ))}
       </div>

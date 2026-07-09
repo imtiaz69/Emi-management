@@ -4,11 +4,39 @@ const EMISchedule = require("../models/EMISchedule");
 const KYCDocument = require("../models/KYCDocument");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
+const { objectId, optionalObjectId, validateBody, z } = require("../middleware/validate");
 const { calculateSchedule } = require("../services/emiService");
 const { approveLoanRequest, createLoanWithSchedule } = require("../services/loanService");
 const { writeAudit } = require("../services/auditService");
 
 const router = express.Router();
+const lateFeePolicySchema = z.object({
+  type: z.enum(["none", "fixed", "daily", "percentage"]).optional().default("none"),
+  value: z.coerce.number().min(0).optional().default(0)
+});
+const loanPreviewSchema = z.object({
+  sellerId: optionalObjectId,
+  buyerId: optionalObjectId,
+  productId: optionalObjectId,
+  principal: z.coerce.number().min(1),
+  downPayment: z.coerce.number().min(0).optional().default(0),
+  interestRate: z.coerce.number().min(0).max(100).optional().default(0),
+  interestType: z.enum(["flat", "reducing", "zero"]).optional().default("flat"),
+  tenureMonths: z.coerce.number().int().min(3).max(60),
+  lateFeePolicy: lateFeePolicySchema.optional(),
+  startDate: z.coerce.date().optional()
+});
+const offlineLoanSchema = loanPreviewSchema.extend({
+  buyerId: objectId,
+  productId: optionalObjectId
+});
+const marketplaceLoanRequestSchema = loanPreviewSchema.extend({
+  sellerId: objectId,
+  productId: objectId
+});
+const rejectLoanSchema = z.object({
+  reason: z.string().trim().max(500).optional().default("Rejected by seller")
+});
 
 router.get(
   "/",
@@ -39,6 +67,7 @@ router.get(
 router.post(
   "/preview",
   authenticate,
+  validateBody(loanPreviewSchema),
   asyncHandler(async (req, res) => {
     res.json(calculateSchedule(req.body));
   })
@@ -49,6 +78,7 @@ router.post(
   authenticate,
   authorize("seller"),
   requireActiveSeller,
+  validateBody(offlineLoanSchema),
   asyncHandler(async (req, res) => {
     const loan = await createLoanWithSchedule({ ...req.body, sellerId: req.user._id, source: "offline" }, req.user._id);
     res.status(201).json(loan);
@@ -59,6 +89,7 @@ router.post(
   "/requests",
   authenticate,
   authorize("buyer"),
+  validateBody(marketplaceLoanRequestSchema),
   asyncHandler(async (req, res) => {
     const loan = await createLoanWithSchedule({ ...req.body, buyerId: req.user._id, source: "marketplace" }, req.user._id, { requested: true });
     res.status(201).json(loan);
@@ -78,7 +109,7 @@ router.get(
     })
       .populate("userId", "name email phone")
       .sort({ createdAt: -1 });
-    res.json(kyc);
+    res.json(kyc.map(sanitizeKycDocument));
   })
 );
 
@@ -97,7 +128,7 @@ router.post(
     kyc.sellerId = req.user._id;
     await kyc.save();
     await writeAudit(req.user._id, "kyc.approved", "KYCDocument", kyc._id);
-    res.json(kyc);
+    res.json(sanitizeKycDocument(kyc));
   })
 );
 
@@ -117,15 +148,40 @@ router.post(
     kyc.sellerId = req.user._id;
     await kyc.save();
     await writeAudit(req.user._id, "kyc.rejected", "KYCDocument", kyc._id);
-    res.json(kyc);
+    res.json(sanitizeKycDocument(kyc));
   })
 );
+
+function sanitizeKycDocument(doc) {
+  const object = typeof doc.toObject === "function" ? doc.toObject() : doc;
+  const id = object._id?.toString();
+  return {
+    ...object,
+    files: (object.files || []).map((file, index) => ({
+      originalName: file.originalName,
+      filename: file.filename,
+      mimetype: file.mimetype,
+      size: file.size,
+      downloadUrl: `/api/kyc/${id}/files/${index}`
+    })),
+    selfie: object.selfie
+      ? {
+          originalName: object.selfie.originalName,
+          filename: object.selfie.filename,
+          mimetype: object.selfie.mimetype,
+          size: object.selfie.size,
+          downloadUrl: `/api/kyc/${id}/files/selfie`
+        }
+      : undefined
+  };
+}
 
 router.patch(
   "/:id/approve",
   authenticate,
   authorize("seller"),
   requireActiveSeller,
+  validateBody(rejectLoanSchema),
   asyncHandler(async (req, res) => {
     const loan = await Loan.findOne({ _id: req.params.id, sellerId: req.user._id, status: "requested" });
     if (!loan) return res.status(404).json({ message: "Loan request not found" });

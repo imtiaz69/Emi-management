@@ -8,10 +8,19 @@ const EMISchedule = require("../models/EMISchedule");
 const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate } = require("../middleware/auth");
+const { validateQuery, z } = require("../middleware/validate");
 const { calculateRiskScore, riskCategoryFromDays, roundMoney } = require("../services/emiService");
 
 const router = express.Router();
 router.use(authenticate);
+const dateFilterSchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional()
+});
+const exportQuerySchema = dateFilterSchema.extend({
+  type: z.enum(["collections", "overdue"]).optional().default("collections"),
+  format: z.enum(["excel", "pdf"]).optional().default("excel")
+});
 
 router.get(
   "/summary",
@@ -49,9 +58,10 @@ router.get(
 
 router.get(
   "/collections",
+  validateQuery(dateFilterSchema),
   asyncHandler(async (req, res) => {
     const query = { ...scopeFilter(req).transaction };
-    applyDateRange(query, req.query, "paymentDate");
+    applyDateRange(query, req.validatedQuery, "paymentDate");
     const rows = await Transaction.find(query).populate("buyerId", "name phone").populate("loanId").sort({ paymentDate: -1 });
     res.json(rows);
   })
@@ -99,9 +109,10 @@ router.get(
 
 router.get(
   "/export",
+  validateQuery(exportQuerySchema),
   asyncHandler(async (req, res) => {
-    const type = req.query.type || "collections";
-    const format = req.query.format || "excel";
+    const type = req.validatedQuery.type || "collections";
+    const format = req.validatedQuery.format || "excel";
     const rows = type === "overdue" ? await getOverdueRows(req) : await Transaction.find(scopeFilter(req).transaction).populate("buyerId", "name phone").limit(1000);
 
     if (format === "pdf") return exportPdf(res, type, rows);

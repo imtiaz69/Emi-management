@@ -8,20 +8,38 @@ cloudinary.config({
   secure: true
 });
 
-async function uploadFile(filePath, folder) {
+async function uploadFile(filePath, folder, { private: isPrivate = false } = {}) {
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
     return {
       secure_url: `/${filePath.split(path.sep).join("/")}`,
       public_id: `${folder}/${path.basename(filePath)}`,
+      resource_type: "local",
       local: true
     };
   }
 
-  return cloudinary.uploader.upload(filePath, {
+  const result = await cloudinary.uploader.upload(filePath, {
     folder,
     resource_type: "auto",
-    overwrite: true
+    overwrite: true,
+    ...(isPrivate ? { type: "authenticated" } : {})
+  });
+
+  if (isPrivate) {
+    result.secure_url = getSignedDeliveryUrl(result.public_id, result.resource_type);
+  }
+
+  return result;
+}
+
+function getSignedDeliveryUrl(publicId, resourceType = "image") {
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) return null;
+  return cloudinary.url(publicId, {
+    resource_type: resourceType,
+    type: "authenticated",
+    sign_url: true,
+    secure: true
   });
 }
 
-module.exports = { uploadFile };
+module.exports = { getSignedDeliveryUrl, uploadFile };

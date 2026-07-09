@@ -3,8 +3,10 @@ const Product = require("../models/Product");
 const Loan = require("../models/Loan");
 const EMISchedule = require("../models/EMISchedule");
 const Transaction = require("../models/Transaction");
+const Order = require("../models/Order");
 const { calculateSchedule, roundMoney } = require("./emiService");
 const { writeAudit } = require("./auditService");
+const { convertReservationToSale } = require("./inventoryService");
 
 async function createLoanWithSchedule(payload, actorId, { requested = false } = {}) {
   const session = await mongoose.startSession();
@@ -86,9 +88,22 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
 
     const product = loan.productId ? await Product.findById(loan.productId).session(session) : null;
     if (product) {
-      if (product.stock < 1) throw new Error("Product is out of stock");
-      product.stock -= 1;
-      await product.save({ session });
+      if (loan.orderId) {
+        const order = await Order.findById(loan.orderId).session(session);
+        const orderItem = order?.items.id(loan.orderItemId);
+        if (orderItem) {
+          await convertReservationToSale(product, orderItem.quantity, "Loan", loan._id, { session, note: `EMI approved for order ${order.orderNo}` });
+          orderItem.fulfillmentStatus = "confirmed";
+          orderItem.loanId = loan._id;
+          order.paymentStatus = "partial";
+          if (order.fulfillmentStatus === "pending") order.fulfillmentStatus = "confirmed";
+          await order.save({ session });
+        }
+      } else {
+        if (product.stock < 1) throw new Error("Product is out of stock");
+        product.stock -= 1;
+        await product.save({ session });
+      }
     }
 
     const result = calculateSchedule({
@@ -126,14 +141,33 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
   }
 }
 
-async function recordPayment({ loanId, amount, method, paymentDate, scheduleId, gatewayRef, notes }, actorId) {
+async function recordPayment(
+  { loanId, amount, method, paymentDate, scheduleId, gatewayRef, notes },
+  actorId,
+  { requireSellerOwnership = false, requireBuyerOwnership = false } = {}
+) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const loan = await Loan.findById(loanId).session(session);
     if (!loan) throw new Error("Loan not found");
+    if (requireSellerOwnership && loan.sellerId.toString() !== actorId.toString()) {
+      const error = new Error("You can only record payments for loans from your shop");
+      error.status = 403;
+      throw error;
+    }
+    if (requireBuyerOwnership && loan.buyerId.toString() !== actorId.toString()) {
+      const error = new Error("You can only pay your own loans");
+      error.status = 403;
+      throw error;
+    }
     let remaining = Number(amount);
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      const error = new Error("Payment amount must be greater than zero");
+      error.status = 400;
+      throw error;
+    }
 
     const schedulesQuery = scheduleId ? { _id: scheduleId, loanId } : { loanId, status: { $in: ["pending", "partial", "overdue"] } };
     const schedules = await EMISchedule.find(schedulesQuery).sort({ dueDate: 1 }).session(session);

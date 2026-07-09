@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { api } from "../api/http";
+import { api, openProtectedFile } from "../api/http";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 export default function AdminPanel() {
@@ -64,9 +64,11 @@ export default function AdminPanel() {
                     <td>{doc.type.toUpperCase()}</td>
                     <td>
                       {(doc.files || []).map((file) => (
-                        <div key={file.publicId || file.filename}><a href={file.path} target="_blank" rel="noreferrer">{file.originalName}</a></div>
+                        <div key={file.filename || file.downloadUrl}>
+                          <button className="button tiny ghost" type="button" onClick={() => openProtectedFile(file.downloadUrl)}>{file.originalName}</button>
+                        </div>
                       ))}
-                      {doc.selfie && <div><a href={doc.selfie.path} target="_blank" rel="noreferrer">Selfie</a></div>}
+                      {doc.selfie && <div><button className="button tiny ghost" type="button" onClick={() => openProtectedFile(doc.selfie.downloadUrl)}>Selfie</button></div>}
                     </td>
                     <td><StatusBadge status={doc.status} /></td>
                     <td>{doc.rejectionReason || "-"}</td>

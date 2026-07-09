@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, CheckCircle2, Eye, Package, RefreshCcw, XCircle } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import dayjs from "dayjs";
-import { api } from "../api/http";
+import { api, openProtectedFile } from "../api/http";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { generateReceiptPdf } from "../utils/receipt.js";
@@ -63,7 +63,7 @@ export default function SellerDashboard() {
   const [loanDetailsModal, setLoanDetailsModal] = useState(null);
 
   const summary = useQuery({ queryKey: ["summary"], queryFn: async () => (await api.get("/reports/summary")).data });
-  const products = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get("/products")).data });
+  const products = useQuery({ queryKey: ["seller-products"], queryFn: async () => (await api.get("/products/mine")).data });
   const loans = useQuery({ queryKey: ["loans"], queryFn: async () => (await api.get("/loans")).data });
   const payments = useQuery({ queryKey: ["payments"], queryFn: async () => (await api.get("/payments")).data });
   const buyers = useQuery({ queryKey: ["buyers-for-seller"], queryFn: async () => (await api.get("/users", { params: { role: "buyer", status: "active" } })).data });
@@ -72,6 +72,7 @@ export default function SellerDashboard() {
   const collections = useQuery({ queryKey: ["collections"], queryFn: async () => (await api.get("/reports/collections")).data });
 
   const activeLoans = (loans.data || []).filter((loan) => loan.status === "active");
+  const activeProducts = useMemo(() => (products.data || []).filter((product) => product.status === "active"), [products.data]);
   const requestedLoans = (loans.data || []).filter((loan) => loan.status === "requested");
   const requestedCount = requestedLoans.length;
   const overviewChartData = [
@@ -103,7 +104,8 @@ export default function SellerDashboard() {
     onSuccess: () => {
       setProductForm({ name: "", category: "Mobile", price: "", stock: "", description: "", emiAvailable: true });
       setProductImages([]);
-      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["seller-products"] });
+      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       alert("Product added successfully.");
     },
@@ -194,7 +196,7 @@ export default function SellerDashboard() {
   async function refreshData() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["summary"] }),
-      queryClient.invalidateQueries({ queryKey: ["products"] }),
+      queryClient.invalidateQueries({ queryKey: ["seller-products"] }),
       queryClient.invalidateQueries({ queryKey: ["loans"] }),
       queryClient.invalidateQueries({ queryKey: ["payments"] }),
       queryClient.invalidateQueries({ queryKey: ["buyers-for-seller"] }),
@@ -218,7 +220,7 @@ export default function SellerDashboard() {
   }
 
   function handleProductForLoan(productId) {
-    const product = (products.data || []).find((item) => item._id === productId);
+    const product = activeProducts.find((item) => item._id === productId);
     setLoanForm({ ...loanForm, productId, principal: product ? String(product.price) : loanForm.principal });
     setSchedulePreview(null);
   }
@@ -436,7 +438,7 @@ export default function SellerDashboard() {
                   label="Product"
                   value={loanForm.productId}
                   onChange={handleProductForLoan}
-                  options={products.data || []}
+                  options={activeProducts}
                   placeholder="Select product"
                   searchPlaceholder="Search product by name, category, or price"
                   getOptionValue={(product) => product._id}
@@ -690,11 +692,11 @@ export default function SellerDashboard() {
                           <td>
                             {(doc.files || []).map((file) => (
                               <div key={file.filename}>
-                                <a href={file.path} target="_blank" rel="noreferrer">{file.originalName}</a>
+                                <button className="button tiny ghost" type="button" onClick={() => openProtectedFile(file.downloadUrl)}>{file.originalName}</button>
                               </div>
                             ))}
                             {doc.selfie && (
-                              <div><a href={doc.selfie.path} target="_blank" rel="noreferrer">Selfie</a></div>
+                              <div><button className="button tiny ghost" type="button" onClick={() => openProtectedFile(doc.selfie.downloadUrl)}>Selfie</button></div>
                             )}
                           </td>
                           <td className="table-action-cell">

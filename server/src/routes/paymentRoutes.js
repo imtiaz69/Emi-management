@@ -2,18 +2,36 @@ const express = require("express");
 const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
+const { objectId, optionalObjectId, validateBody, z } = require("../middleware/validate");
 const { recordPayment } = require("../services/loanService");
 const { createMockGatewayReference } = require("../services/paymentService");
 
 const router = express.Router();
+const manualPaymentSchema = z.object({
+  loanId: objectId,
+  scheduleId: optionalObjectId,
+  amount: z.coerce.number().min(1),
+  method: z.enum(["cash", "bank", "cheque", "bkash", "nagad", "sslcommerz"]),
+  paymentDate: z.coerce.date().optional(),
+  gatewayRef: z.string().trim().max(120).optional(),
+  notes: z.string().trim().max(500).optional().default("")
+});
+const mockPaymentSchema = z.object({
+  loanId: objectId,
+  scheduleId: optionalObjectId,
+  amount: z.coerce.number().min(1),
+  method: z.enum(["mock_gateway"]).optional(),
+  notes: z.string().trim().max(500).optional().default("")
+});
 
 router.post(
   "/manual",
   authenticate,
   authorize("seller"),
   requireActiveSeller,
+  validateBody(manualPaymentSchema),
   asyncHandler(async (req, res) => {
-    const transaction = await recordPayment(req.body, req.user._id);
+    const transaction = await recordPayment(req.body, req.user._id, { requireSellerOwnership: true });
     res.status(201).json(transaction);
   })
 );
@@ -21,10 +39,13 @@ router.post(
 router.post(
   "/mock-gateway",
   authenticate,
+  authorize("buyer"),
+  validateBody(mockPaymentSchema),
   asyncHandler(async (req, res) => {
     const transaction = await recordPayment(
       { ...req.body, method: req.body.method || "mock_gateway", gatewayRef: createMockGatewayReference("PAY") },
-      req.user._id
+      req.user._id,
+      { requireBuyerOwnership: true }
     );
     res.status(201).json(transaction);
   })

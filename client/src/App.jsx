@@ -6,14 +6,21 @@ import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import SellerDashboard from "./pages/SellerDashboard.jsx";
 import Marketplace from "./pages/Marketplace.jsx";
+import ProductDetails from "./pages/ProductDetails.jsx";
+import Cart from "./pages/Cart.jsx";
+import Checkout from "./pages/Checkout.jsx";
+import Orders from "./pages/Orders.jsx";
+import OrderDetails from "./pages/OrderDetails.jsx";
 import BuyerPortal from "./pages/BuyerPortal.jsx";
 import LoanDetails from "./pages/LoanDetails.jsx";
 import AdminPanel from "./pages/AdminPanel.jsx";
+import SellerPending from "./pages/SellerPending.jsx";
 
-function Protected({ roles, children }) {
+function Protected({ roles, requireActiveSeller = false, children }) {
   const { user, isAuthenticated } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (roles && !roles.includes(user?.role)) return <Navigate to="/" replace />;
+  if (requireActiveSeller && user?.role === "seller" && user.status !== "active") return <Navigate to="/seller/pending" replace />;
   return children;
 }
 
@@ -26,11 +33,52 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/marketplace" element={<Marketplace />} />
+          <Route path="/products/:id" element={<ProductDetails />} />
+          <Route
+            path="/cart"
+            element={
+              <Protected roles={["buyer"]}>
+                <Cart />
+              </Protected>
+            }
+          />
+          <Route
+            path="/checkout"
+            element={
+              <Protected roles={["buyer"]}>
+                <Checkout />
+              </Protected>
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              <Protected roles={["buyer", "seller", "admin"]}>
+                <Orders />
+              </Protected>
+            }
+          />
+          <Route
+            path="/orders/:id"
+            element={
+              <Protected roles={["buyer", "seller", "admin"]}>
+                <OrderDetails />
+              </Protected>
+            }
+          />
           <Route
             path="/seller"
             element={
-              <Protected roles={["seller"]}>
+              <Protected roles={["seller"]} requireActiveSeller>
                 <SellerDashboard />
+              </Protected>
+            }
+          />
+          <Route
+            path="/seller/pending"
+            element={
+              <Protected roles={["seller"]}>
+                <SellerPending />
               </Protected>
             }
           />

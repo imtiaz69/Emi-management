@@ -24,6 +24,9 @@ export default function Layout() {
           <NavLink to="/marketplace">Marketplace</NavLink>
           <Link to="/#features">Features</Link>
           <Link to="/#about">About Us</Link>
+          {user?.role === "buyer" && <NavLink to="/cart">Cart</NavLink>}
+          {user?.role === "buyer" && <NavLink to="/orders">Orders</NavLink>}
+          {user?.role === "seller" && <NavLink to="/orders">Orders</NavLink>}
           {user?.role === "seller" && <NavLink to="/seller">Seller Dashboard</NavLink>}
           {user?.role === "buyer" && <NavLink to="/buyer">Buyer Portal</NavLink>}
           {user?.role === "admin" && <NavLink to="/admin">Admin</NavLink>}

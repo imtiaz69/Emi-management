@@ -7,11 +7,34 @@ const asyncHandler = require("../utils/asyncHandler");
 const { isStrongPassword } = require("../utils/password");
 const { signToken } = require("../utils/tokens");
 const { writeAudit } = require("../services/auditService");
+const { validateBody, z } = require("../middleware/validate");
 
 const router = express.Router();
+const registerSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().max(180),
+  phone: z.string().trim().min(6).max(30),
+  password: z.string().min(8).max(128),
+  role: z.enum(["seller", "buyer"]),
+  shopName: z.string().trim().max(160).optional().default(""),
+  ownerName: z.string().trim().max(120).optional().default(""),
+  address: z.string().trim().max(500).optional().default(""),
+  businessType: z.string().trim().max(80).optional().default("Retail"),
+  tradeLicenseNo: z.string().trim().max(80).optional().default(""),
+  nidNumber: z.string().trim().max(80).optional().default("")
+});
+const loginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(1).max(128)
+});
+const verifyOtpSchema = z.object({
+  email: z.string().trim().email(),
+  otp: z.string().trim().min(4).max(10)
+});
 
 router.post(
   "/register",
+  validateBody(registerSchema),
   asyncHandler(async (req, res) => {
     const { name, email, phone, password, role, shopName, ownerName, address, businessType, tradeLicenseNo, nidNumber } = req.body;
     if (!["seller", "buyer"].includes(role)) return res.status(400).json({ message: "Role must be seller or buyer" });
@@ -53,6 +76,7 @@ router.post(
 
 router.post(
   "/login",
+  validateBody(loginSchema),
   asyncHandler(async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email: email?.toLowerCase() });
@@ -77,6 +101,7 @@ router.post(
 
 router.post(
   "/verify-otp",
+  validateBody(verifyOtpSchema),
   asyncHandler(async (req, res) => {
     const { email, otp } = req.body;
     const user = await User.findOne({ email: email?.toLowerCase() });
