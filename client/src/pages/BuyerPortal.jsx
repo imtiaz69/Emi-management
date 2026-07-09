@@ -30,6 +30,8 @@ export default function BuyerPortal() {
   const buyerProfile = useQuery({ queryKey: ["buyer-profile"], queryFn: async () => (await api.get("/buyer/profile")).data });
   const applications = useQuery({ queryKey: ["emi-applications"], queryFn: async () => (await api.get("/emi-applications")).data });
   const summary = useQuery({ queryKey: ["buyer-summary"], queryFn: async () => (await api.get("/reports/summary")).data });
+  const orders = useQuery({ queryKey: ["buyer-orders"], queryFn: async () => (await api.get("/orders")).data });
+  const notifications = useQuery({ queryKey: ["notifications"], queryFn: async () => (await api.get("/notifications")).data });
 
   useEffect(() => {
     if (buyerProfile.data?.profile) {
@@ -113,6 +115,8 @@ export default function BuyerPortal() {
     return { loanId: loan._id, allocationMode, amount };
   }
 
+  const nextDueAmount = (loans.data || []).reduce((sum, loan) => sum + Number(loan.paymentSummary?.nextDueAmount || 0), 0);
+
   useEffect(() => {
     if (stripeStatus === "success" && stripeSessionId && !confirmStripePayment.isPending && !confirmStripePayment.isSuccess) {
       confirmStripePayment.mutate(stripeSessionId);
@@ -130,6 +134,7 @@ export default function BuyerPortal() {
       <div className="stats-grid">
         <StatCard label="Active EMIs" value={summary.data?.activeEmis ?? 0} />
         <StatCard label="Due amount" value={`BDT ${Math.round(summary.data?.dueAmount || 0)}`} tone="green" />
+        <StatCard label="Next due total" value={`BDT ${Math.round(nextDueAmount)}`} tone="purple" />
         <StatCard label="Overdues" value={summary.data?.overdueCount ?? 0} tone="red" />
         <StatCard label="Paid this month" value={`BDT ${Math.round(summary.data?.monthlyCollection || 0)}`} tone="purple" />
       </div>
@@ -282,6 +287,48 @@ export default function BuyerPortal() {
           </table>
         </div>
       </section>
+
+      <div className="work-grid">
+        <section className="panel">
+          <h2>My orders and delivery</h2>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Order</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Placed</th><th>Action</th></tr></thead>
+              <tbody>
+                {(orders.data || []).length === 0 ? (
+                  <tr><td colSpan="6" style={{ textAlign: "center", color: "#888" }}>No orders yet</td></tr>
+                ) : (
+                  (orders.data || []).map((order) => (
+                    <tr key={order._id}>
+                      <td>{order.orderNo}</td>
+                      <td>BDT {order.total}</td>
+                      <td><StatusBadge status={order.paymentStatus} /></td>
+                      <td><StatusBadge status={order.fulfillmentStatus} /></td>
+                      <td>{dayjs(order.createdAt).format("DD MMM YYYY")}</td>
+                      <td><Link className="button tiny" to={`/orders/${order._id}`}>Track</Link></td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section className="panel">
+          <h2>Notifications</h2>
+          <div className="list-stack">
+            {(notifications.data || []).length === 0 ? (
+              <p className="hint">No notifications yet.</p>
+            ) : (
+              (notifications.data || []).slice(0, 8).map((item) => (
+                <div className="list-row" key={item._id}>
+                  <div><strong>{item.messageType}</strong><span>{item.message}</span></div>
+                  <StatusBadge status={item.status} />
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
 
       <section className="panel">
         <h2>Payment history</h2>

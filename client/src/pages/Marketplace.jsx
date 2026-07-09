@@ -8,10 +8,11 @@ import { useAuth } from "../context/AuthContext.jsx";
 export default function Marketplace() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [q, setQ] = useState("");
+  const [filters, setFilters] = useState({ q: "", category: "", sellerId: "", minPrice: "", maxPrice: "", sort: "newest" });
   const [selected, setSelected] = useState(null);
   const [request, setRequest] = useState({ downPayment: "1000", interestRate: "12", tenureMonths: "6", interestType: "flat" });
-  const products = useQuery({ queryKey: ["marketplace", q], queryFn: async () => (await api.get("/products", { params: { q } })).data });
+  const products = useQuery({ queryKey: ["marketplace", filters], queryFn: async () => (await api.get("/products", { params: filters })).data });
+  const filterMeta = useQuery({ queryKey: ["product-filter-meta"], queryFn: async () => (await api.get("/products/meta/filters")).data });
 
   const requestLoan = useMutation({
     mutationFn: async () =>
@@ -38,8 +39,39 @@ export default function Marketplace() {
           <h1>Buyer Marketplace</h1>
           <p>Browse seller products and request EMI financing with a transparent payment preview.</p>
         </div>
-        <div className="search-box"><Search size={18} /><input placeholder="Search products" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="search-box"><Search size={18} /><input placeholder="Search products" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} /></div>
       </div>
+
+      <section className="panel">
+        <div className="form-grid compact">
+          <label>Category
+            <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}>
+              <option value="">All categories</option>
+              {(filterMeta.data?.categories || []).map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </label>
+          <label>Seller
+            <select value={filters.sellerId} onChange={(e) => setFilters({ ...filters, sellerId: e.target.value })}>
+              <option value="">All sellers</option>
+              {(filterMeta.data?.sellers || []).map((seller) => <option key={seller._id} value={seller._id}>{seller.name}</option>)}
+            </select>
+          </label>
+          <label>Min price
+            <input type="number" value={filters.minPrice} onChange={(e) => setFilters({ ...filters, minPrice: e.target.value })} placeholder="BDT" />
+          </label>
+          <label>Max price
+            <input type="number" value={filters.maxPrice} onChange={(e) => setFilters({ ...filters, maxPrice: e.target.value })} placeholder="BDT" />
+          </label>
+          <label>Sort
+            <select value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })}>
+              <option value="newest">Newest</option>
+              <option value="price_asc">Price low to high</option>
+              <option value="price_desc">Price high to low</option>
+              <option value="popular">Popular/featured</option>
+            </select>
+          </label>
+        </div>
+      </section>
 
       <div className="product-grid">
         {(products.data || []).map((product) => (

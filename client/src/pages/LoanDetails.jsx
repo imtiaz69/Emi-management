@@ -79,9 +79,12 @@ export default function LoanDetails() {
           </div>
           <pre className="agreement-terms">{agreement.terms}</pre>
           {["buyer", "seller"].includes(user?.role) && (
-            <button className="button" disabled={Boolean(acceptedForRole) || acceptAgreement.isPending} onClick={() => acceptAgreement.mutate()}>
-              {acceptedForRole ? "Agreement accepted" : "Accept agreement"}
-            </button>
+            <div className="button-row">
+              <button className="button" disabled={Boolean(acceptedForRole) || acceptAgreement.isPending} onClick={() => acceptAgreement.mutate()}>
+                {acceptedForRole ? "Agreement accepted" : "Accept agreement"}
+              </button>
+              <button className="button secondary" onClick={() => window.print()}>Print / save PDF</button>
+            </div>
           )}
         </section>
       )}

@@ -15,6 +15,7 @@ import BuyerPortal from "./pages/BuyerPortal.jsx";
 import LoanDetails from "./pages/LoanDetails.jsx";
 import AdminPanel from "./pages/AdminPanel.jsx";
 import SellerPending from "./pages/SellerPending.jsx";
+import AccountSettings from "./pages/AccountSettings.jsx";
 
 function Protected({ roles, requireActiveSeller = false, children }) {
   const { user, isAuthenticated } = useAuth();
@@ -95,6 +96,14 @@ export default function App() {
             element={
               <Protected>
                 <LoanDetails />
+              </Protected>
+            }
+          />
+          <Route
+            path="/account"
+            element={
+              <Protected>
+                <AccountSettings />
               </Protected>
             }
           />

@@ -30,6 +30,7 @@ export default function Layout() {
           {user?.role === "seller" && <NavLink to="/seller">Seller Dashboard</NavLink>}
           {user?.role === "buyer" && <NavLink to="/buyer">Buyer Portal</NavLink>}
           {user?.role === "admin" && <NavLink to="/admin">Admin</NavLink>}
+          {user && <NavLink to="/account">Account</NavLink>}
         </nav>
         <div className="top-actions">
           {user && (

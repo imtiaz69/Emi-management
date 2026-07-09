@@ -6,7 +6,8 @@ const KYCDocument = require("../models/KYCDocument");
 const KYCReview = require("../models/KYCReview");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
-const { createUploader } = require("../middleware/upload");
+const { requireVerified } = require("../middleware/security");
+const { assertUploadedFilesSafe, createUploader } = require("../middleware/upload");
 const { validateBody, z } = require("../middleware/validate");
 const { getSignedDeliveryUrl, uploadFile } = require("../utils/cloudinary");
 const { writeAudit } = require("../services/auditService");
@@ -24,12 +25,14 @@ const kycReviewSchema = z.object({
 router.post(
   "/",
   authenticate,
+  requireVerified,
   upload.fields([
     { name: "documents", maxCount: 3 },
     { name: "selfie", maxCount: 1 }
   ]),
   validateBody(uploadKycSchema),
   asyncHandler(async (req, res) => {
+    await assertUploadedFilesSafe(req.files || {});
     const documents = await Promise.all((req.files?.documents || []).map((file) => uploadAndBuild(file, `kyc/${req.user._id}/documents`)));
     const selfie = req.files?.selfie?.[0] ? await uploadAndBuild(req.files.selfie[0], `kyc/${req.user._id}/selfie`) : undefined;
 

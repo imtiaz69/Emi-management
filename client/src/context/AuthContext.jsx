@@ -24,19 +24,28 @@ export function AuthProvider({ children }) {
 
   function persist(data) {
     localStorage.setItem("emi_token", data.token);
+    if (data.refreshToken) localStorage.setItem("emi_refresh_token", data.refreshToken);
     localStorage.setItem("emi_user", JSON.stringify(data.user));
     setToken(data.token);
     setUser(data.user);
   }
 
   function logout() {
+    const refreshToken = localStorage.getItem("emi_refresh_token");
+    if (refreshToken) api.post("/auth/logout", { refreshToken }).catch(() => {});
     localStorage.removeItem("emi_token");
+    localStorage.removeItem("emi_refresh_token");
     localStorage.removeItem("emi_user");
     setToken(null);
     setUser(null);
   }
 
-  const value = useMemo(() => ({ token, user, login, register, logout, isAuthenticated: Boolean(token) }), [token, user]);
+  function updateUser(nextUser) {
+    localStorage.setItem("emi_user", JSON.stringify(nextUser));
+    setUser(nextUser);
+  }
+
+  const value = useMemo(() => ({ token, user, login, register, logout, updateUser, isAuthenticated: Boolean(token) }), [token, user]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

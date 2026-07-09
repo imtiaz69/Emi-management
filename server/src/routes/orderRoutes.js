@@ -4,12 +4,12 @@ const { authenticate, authorize } = require("../middleware/auth");
 const { validateBody, validateQuery, z } = require("../middleware/validate");
 const {
   cancelOrder,
-  createOrderFromCart,
   getOrderForUser,
   listOrdersForUser,
   markOrderPaid,
   updateOrderFulfillment
 } = require("../services/orderService");
+const { checkoutFromCart } = require("../services/checkoutService");
 
 const router = express.Router();
 router.use(authenticate);
@@ -57,7 +57,7 @@ router.post(
   authorize("buyer"),
   validateBody(fromCartSchema),
   asyncHandler(async (req, res) => {
-    const order = await createOrderFromCart({ ...req.body, buyerId: req.user._id });
+    const order = await checkoutFromCart({ ...req.body, buyerId: req.user._id });
     res.status(201).json(order);
   })
 );

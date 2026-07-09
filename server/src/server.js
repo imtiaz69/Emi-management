@@ -1,10 +1,12 @@
 require("dotenv").config();
+const { validateEnv } = require("./config/env");
 const app = require("./app");
 const { connectDB } = require("./config/db");
 const { startOverdueJob } = require("./jobs/overdueJob");
 const { seedDemoData } = require("./services/seedService");
 
-const port = process.env.PORT || 5000;
+const env = validateEnv();
+const port = env.PORT || 5000;
 
 connectDB()
   .then(async () => {

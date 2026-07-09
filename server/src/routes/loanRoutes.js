@@ -7,6 +7,7 @@ const KYCReview = require("../models/KYCReview");
 const LoanAgreement = require("../models/LoanAgreement");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
+const { requireVerified } = require("../middleware/security");
 const { objectId, optionalObjectId, validateBody, z } = require("../middleware/validate");
 const { calculateSchedule } = require("../services/emiService");
 const { approveLoanRequest, createLoanWithSchedule } = require("../services/loanService");
@@ -127,6 +128,7 @@ router.post(
   "/requests",
   authenticate,
   authorize("buyer"),
+  requireVerified,
   validateBody(marketplaceLoanRequestSchema),
   asyncHandler(async (req, res) => {
     await assertBuyerReadyForEmi(req.user._id);

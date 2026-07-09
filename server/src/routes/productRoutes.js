@@ -3,9 +3,9 @@ const express = require("express");
 const Product = require("../models/Product");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
-const { createUploader } = require("../middleware/upload");
+const { assertUploadedFilesSafe, createUploader } = require("../middleware/upload");
 const { formBoolean, validateBody, z } = require("../middleware/validate");
-const { uploadFile } = require("../utils/cloudinary");
+const { deleteUploadedFile, uploadFile } = require("../utils/cloudinary");
 const { writeAudit } = require("../services/auditService");
 
 const router = express.Router();
@@ -37,7 +37,8 @@ const productUpdateSchema = z.object({
   stock: z.coerce.number().int().min(0).optional(),
   lowStockThreshold: z.coerce.number().int().min(0).optional(),
   emiAvailable: formBoolean.optional(),
-  featured: formBoolean.optional()
+  featured: formBoolean.optional(),
+  replaceImages: formBoolean.optional().default(false)
 });
 
 router.get(
@@ -55,14 +56,35 @@ router.get(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { q, category, sellerId, minPrice, maxPrice } = req.query;
+    const { q, category, sellerId, minPrice, maxPrice, sort } = req.query;
     const filter = { status: "active" };
     if (sellerId) filter.sellerId = sellerId;
     if (category) filter.category = category;
     if (minPrice || maxPrice) filter.price = { ...(minPrice && { $gte: Number(minPrice) }), ...(maxPrice && { $lte: Number(maxPrice) }) };
     if (q) filter.$text = { $search: q };
-    const products = await Product.find(filter).populate("sellerId", "name phone").sort({ createdAt: -1 });
+    const sortMap = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      newest: { createdAt: -1 },
+      popular: { featured: -1, createdAt: -1 }
+    };
+    const products = await Product.find(filter).populate("sellerId", "name phone").sort(sortMap[sort] || sortMap.newest);
     res.json(products);
+  })
+);
+
+router.get(
+  "/meta/filters",
+  asyncHandler(async (_req, res) => {
+    const [categories, sellers] = await Promise.all([
+      Product.distinct("category", { status: "active" }),
+      Product.find({ status: "active" }).populate("sellerId", "name").select("sellerId").lean()
+    ]);
+    const sellerMap = new Map();
+    sellers.forEach((row) => {
+      if (row.sellerId?._id) sellerMap.set(row.sellerId._id.toString(), row.sellerId);
+    });
+    res.json({ categories: categories.filter(Boolean).sort(), sellers: [...sellerMap.values()] });
   })
 );
 
@@ -87,6 +109,7 @@ router.post(
   upload.array("images", 5),
   validateBody(productCreateSchema),
   asyncHandler(async (req, res) => {
+    await assertUploadedFilesSafe(req.files || []);
     const productImages = await Promise.all((req.files || []).map((file) => uploadAndBuild(file, `products/${req.user._id}`)));
     const product = await Product.create({
       sellerId: req.user._id,
@@ -118,6 +141,7 @@ router.patch(
   upload.array("images", 5),
   validateBody(productUpdateSchema),
   asyncHandler(async (req, res) => {
+    await assertUploadedFilesSafe(req.files || []);
     const product = await Product.findOne({ _id: req.params.id, sellerId: req.user._id });
     if (!product) return res.status(404).json({ message: "Product not found" });
     ["name", "sku", "brand", "warranty", "description", "category", "status"].forEach((key) => {
@@ -130,7 +154,15 @@ router.patch(
     if (req.body.lowStockThreshold !== undefined) product.lowStockThreshold = req.body.lowStockThreshold;
     if (req.body.emiAvailable !== undefined) product.emiAvailable = req.body.emiAvailable;
     if (req.body.featured !== undefined) product.featured = req.body.featured;
-    if (req.files?.length) product.images.push(...await Promise.all(req.files.map((file) => uploadAndBuild(file, `products/${req.user._id}`))));
+    if (req.files?.length) {
+      const nextImages = await Promise.all(req.files.map((file) => uploadAndBuild(file, `products/${req.user._id}`)));
+      if (req.body.replaceImages) {
+        await Promise.all((product.images || []).map(deleteUploadedFile));
+        product.images = nextImages;
+      } else {
+        product.images.push(...nextImages);
+      }
+    }
     await product.save();
     await writeAudit(req.user._id, "product.updated", "Product", product._id);
     res.json(product);

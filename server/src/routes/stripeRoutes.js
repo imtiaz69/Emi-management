@@ -1,12 +1,14 @@
 const express = require("express");
-const Stripe = require("stripe");
 const Loan = require("../models/Loan");
 const EMISchedule = require("../models/EMISchedule");
+const PaymentLog = require("../models/PaymentLog");
 const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
+const { requireVerified } = require("../middleware/security");
 const { objectId, validateBody, z } = require("../middleware/validate");
 const { recordPayment } = require("../services/loanService");
+const { getStripeClient, toStripeAmount } = require("../services/stripeService");
 
 const router = express.Router();
 const createCheckoutSessionSchema = z.object({
@@ -17,24 +19,6 @@ const createCheckoutSessionSchema = z.object({
 const confirmCheckoutSessionSchema = z.object({
   sessionId: z.string().trim().min(5).max(300)
 });
-
-function getStripeClient() {
-  if (!process.env.STRIPE_SECRET_KEY) {
-    const error = new Error("Stripe secret key is not configured");
-    error.status = 500;
-    throw error;
-  }
-  return new Stripe(process.env.STRIPE_SECRET_KEY);
-}
-
-function toStripeAmount(amountBdt) {
-  const currency = (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
-  if (currency === "bdt") return Math.round(Number(amountBdt));
-
-  const exchangeRate = Number(process.env.STRIPE_BDT_PER_USD || 120);
-  const amountInCents = Math.round((Number(amountBdt) / exchangeRate) * 100);
-  return Math.max(amountInCents, 50);
-}
 
 async function getOutstandingAmount(loanId) {
   const schedules = await EMISchedule.find({ loanId, status: { $in: ["pending", "partial", "overdue"] } });
@@ -48,9 +32,12 @@ async function recordStripeCheckoutPayment(session) {
   const gatewayRef = session.payment_intent || session.id;
   const existingTransaction = await Transaction.findOne({ gatewayRef });
 
-  if (existingTransaction) return existingTransaction;
+  if (existingTransaction) {
+    await updatePaymentLog(session, "confirmed", "checkout.session.completed");
+    return existingTransaction;
+  }
 
-  return recordPayment(
+  const transaction = await recordPayment(
     {
       loanId: session.metadata.loanId,
       amount: Number(session.metadata.amountBdt),
@@ -62,12 +49,34 @@ async function recordStripeCheckoutPayment(session) {
     session.metadata.buyerId,
     { requireBuyerOwnership: true }
   );
+  await updatePaymentLog(session, "confirmed", "checkout.session.completed", transaction._id);
+  return transaction;
+}
+
+async function updatePaymentLog(session, status, eventType, transactionId) {
+  return PaymentLog.findOneAndUpdate(
+    { provider: "stripe", sessionId: session.id },
+    {
+      provider: "stripe",
+      sessionId: session.id,
+      paymentIntentId: session.payment_intent,
+      loanId: session.metadata?.loanId,
+      buyerId: session.metadata?.buyerId,
+      amount: Number(session.metadata?.amountBdt || 0),
+      currency: session.currency,
+      status,
+      eventType,
+      metadata: { ...session.metadata, transactionId }
+    },
+    { upsert: true, new: true }
+  );
 }
 
 router.post(
   "/create-checkout-session",
   authenticate,
   authorize("buyer"),
+  requireVerified,
   validateBody(createCheckoutSessionSchema),
   asyncHandler(async (req, res) => {
     const { loanId, allocationMode } = req.body;
@@ -116,7 +125,7 @@ router.post(
         }
       ],
       success_url: `${clientUrl}/buyer?stripe=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${clientUrl}/buyer?stripe=cancel`,
+      cancel_url: `${clientUrl}/buyer?stripe=cancel&session_id={CHECKOUT_SESSION_ID}`,
       metadata: {
         loanId: loan._id.toString(),
         buyerId: req.user._id.toString(),
@@ -124,6 +133,7 @@ router.post(
         allocationMode
       }
     });
+    await updatePaymentLog(session, "pending", "checkout.session.created");
 
     res.status(201).json({ sessionId: session.id, url: session.url });
   })
@@ -133,6 +143,7 @@ router.post(
   "/confirm-checkout-session",
   authenticate,
   authorize("buyer"),
+  requireVerified,
   validateBody(confirmCheckoutSessionSchema),
   asyncHandler(async (req, res) => {
     if (!req.body.sessionId) {
@@ -150,6 +161,7 @@ router.post(
       throw error;
     }
     if (session.payment_status !== "paid") {
+      await updatePaymentLog(session, session.status === "expired" ? "cancelled" : "failed", "checkout.session.return_not_paid");
       const error = new Error("Stripe payment is not completed yet");
       error.status = 400;
       throw error;
@@ -168,6 +180,10 @@ async function stripeWebhookHandler(req, res, next) {
 
     if (process.env.STRIPE_WEBHOOK_SECRET) {
       event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+    } else if (process.env.NODE_ENV === "production") {
+      const error = new Error("Stripe webhook secret is required in production");
+      error.status = 500;
+      throw error;
     } else {
       event = JSON.parse(req.body.toString());
     }
@@ -175,6 +191,13 @@ async function stripeWebhookHandler(req, res, next) {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       await recordStripeCheckoutPayment(session);
+    }
+    if (event.type === "checkout.session.expired") {
+      await updatePaymentLog(event.data.object, "cancelled", event.type);
+    }
+    if (event.type === "payment_intent.payment_failed") {
+      const intent = event.data.object;
+      await PaymentLog.findOneAndUpdate({ provider: "stripe", paymentIntentId: intent.id }, { status: "failed", eventType: event.type, metadata: intent.metadata || {} }, { upsert: true });
     }
 
     res.json({ received: true });

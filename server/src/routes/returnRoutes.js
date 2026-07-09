@@ -1,6 +1,7 @@
 const express = require("express");
 const ReturnRequest = require("../models/ReturnRequest");
 const Order = require("../models/Order");
+const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { objectId, validateBody, z } = require("../middleware/validate");
@@ -48,6 +49,9 @@ router.patch(
     if (req.user.role === "seller") filter.sellerId = req.user._id;
     const request = await ReturnRequest.findOneAndUpdate(filter, { status: req.body.status }, { new: true });
     if (!request) return res.status(404).json({ message: "Return request not found" });
+    if (req.body.status === "refunded") {
+      await Transaction.updateMany({ orderId: request.orderId, sellerId: request.sellerId, status: "confirmed" }, { status: "refunded", notes: "Marked refunded from return request" });
+    }
     res.json(request);
   })
 );

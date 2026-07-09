@@ -32,6 +32,18 @@ async function uploadFile(filePath, folder, { private: isPrivate = false } = {})
   return result;
 }
 
+async function deleteUploadedFile(file = {}) {
+  if (!file.path) return;
+  if (file.resourceType === "local" || file.path.startsWith("/uploads/")) {
+    const localPath = file.path.replace(/^\/uploads\//, `${process.env.UPLOAD_DIR || "uploads"}/`);
+    await require("fs").promises.unlink(localPath).catch(() => {});
+    return;
+  }
+  if (file.publicId && process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+    await cloudinary.uploader.destroy(file.publicId, { resource_type: file.resourceType || "image" }).catch(() => {});
+  }
+}
+
 function getSignedDeliveryUrl(publicId, resourceType = "image") {
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) return null;
   return cloudinary.url(publicId, {
@@ -42,4 +54,4 @@ function getSignedDeliveryUrl(publicId, resourceType = "image") {
   });
 }
 
-module.exports = { getSignedDeliveryUrl, uploadFile };
+module.exports = { deleteUploadedFile, getSignedDeliveryUrl, uploadFile };

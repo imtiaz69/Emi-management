@@ -1,26 +1,61 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { api, openProtectedFile } from "../api/http";
+import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 
 export default function AdminPanel() {
   const queryClient = useQueryClient();
+  const [sellerReason, setSellerReason] = useState("Incomplete business information");
+  const [settingsForm, setSettingsForm] = useState(null);
+  const overview = useQuery({ queryKey: ["admin-overview"], queryFn: async () => (await api.get("/admin/overview")).data });
   const pending = useQuery({ queryKey: ["pending-sellers"], queryFn: async () => (await api.get("/admin/sellers/pending")).data });
   const pendingKyc = useQuery({ queryKey: ["kyc-pending"], queryFn: async () => (await api.get("/kyc/pending")).data });
   const users = useQuery({ queryKey: ["admin-users"], queryFn: async () => (await api.get("/admin/users")).data });
   const audit = useQuery({ queryKey: ["audit"], queryFn: async () => (await api.get("/admin/audit")).data });
+  const adminProducts = useQuery({ queryKey: ["admin-products"], queryFn: async () => (await api.get("/admin/products")).data });
+  const adminOrders = useQuery({ queryKey: ["admin-orders"], queryFn: async () => (await api.get("/admin/orders")).data });
+  const portfolio = useQuery({ queryKey: ["admin-portfolio"], queryFn: async () => (await api.get("/admin/portfolio")).data });
+  const disputes = useQuery({ queryKey: ["admin-disputes"], queryFn: async () => (await api.get("/admin/disputes")).data });
+  const returns = useQuery({ queryKey: ["admin-returns"], queryFn: async () => (await api.get("/admin/returns")).data });
+  const settings = useQuery({ queryKey: ["admin-settings"], queryFn: async () => (await api.get("/admin/settings")).data });
+
+  useEffect(() => {
+    if (settings.data) setSettingsForm(settings.data);
+  }, [settings.data]);
 
   const approve = useMutation({
     mutationFn: async (id) => api.patch(`/admin/sellers/${id}/approve`),
     onSuccess: () => refresh()
   });
   const reject = useMutation({
-    mutationFn: async (id) => api.patch(`/admin/sellers/${id}/reject`, { reason: "Incomplete business information" }),
+    mutationFn: async (id) => api.patch(`/admin/sellers/${id}/reject`, { reason: sellerReason }),
+    onSuccess: () => refresh()
+  });
+  const needsInfo = useMutation({
+    mutationFn: async (id) => api.patch(`/admin/sellers/${id}/needs-info`, { reason: sellerReason }),
     onSuccess: () => refresh()
   });
 
   const reviewKyc = useMutation({
     mutationFn: async ({ id, status, rejectionReason }) => api.patch(`/kyc/${id}/review`, { status, rejectionReason }),
+    onSuccess: () => refresh()
+  });
+  const moderateProduct = useMutation({
+    mutationFn: async ({ id, payload }) => api.patch(`/admin/products/${id}/moderate`, payload),
+    onSuccess: () => refresh()
+  });
+  const suspendUser = useMutation({
+    mutationFn: async (id) => api.patch(`/admin/users/${id}/suspend`, { reason: "Admin status action" }),
+    onSuccess: () => refresh()
+  });
+  const reactivateUser = useMutation({
+    mutationFn: async (id) => api.patch(`/admin/users/${id}/reactivate`),
+    onSuccess: () => refresh()
+  });
+  const saveSettings = useMutation({
+    mutationFn: async () => api.patch("/admin/settings", settingsForm),
     onSuccess: () => refresh()
   });
 
@@ -29,6 +64,13 @@ export default function AdminPanel() {
     queryClient.invalidateQueries({ queryKey: ["kyc-pending"] });
     queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     queryClient.invalidateQueries({ queryKey: ["audit"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-portfolio"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-disputes"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-returns"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-settings"] });
   }
 
   return (
@@ -39,14 +81,29 @@ export default function AdminPanel() {
           <p>Approve sellers, inspect platform users, and review accountability logs.</p>
         </div>
       </div>
+      <div className="stats-grid">
+        <StatCard label="Users" value={overview.data?.users ?? 0} />
+        <StatCard label="Pending sellers" value={overview.data?.sellersPending ?? 0} tone="purple" />
+        <StatCard label="Pending products" value={overview.data?.productsPending ?? 0} />
+        <StatCard label="Active loans" value={overview.data?.activeLoans ?? 0} tone="green" />
+        <StatCard label="Orders" value={overview.data?.orders ?? 0} tone="green" />
+        <StatCard label="Open disputes" value={overview.data?.disputes ?? 0} tone="red" />
+      </div>
       <div className="work-grid">
         <section className="panel">
           <h2>Pending seller registrations</h2>
+          <label>Decision reason
+            <input value={sellerReason} onChange={(e) => setSellerReason(e.target.value)} />
+          </label>
           <div className="list-stack">
             {(pending.data || []).map((seller) => (
               <div className="list-row" key={seller._id}>
-                <div><strong>{seller.shopName}</strong><span>{seller.userId?.email}</span></div>
-                <div className="button-row"><button className="button tiny" onClick={() => approve.mutate(seller._id)}>Approve</button><button className="button tiny danger" onClick={() => reject.mutate(seller._id)}>Reject</button></div>
+                <div><strong>{seller.shopName}</strong><span>{seller.userId?.email} | {seller.address} | Trade license: {seller.tradeLicenseNo || "-"}</span></div>
+                <div className="button-row">
+                  <button className="button tiny" onClick={() => approve.mutate(seller._id)}>Approve</button>
+                  <button className="button tiny ghost" onClick={() => needsInfo.mutate(seller._id)}>Needs info</button>
+                  <button className="button tiny danger" onClick={() => reject.mutate(seller._id)}>Reject</button>
+                </div>
               </div>
             ))}
             {pending.data?.length === 0 && <p className="hint">No pending sellers.</p>}
@@ -88,12 +145,84 @@ export default function AdminPanel() {
           <h2>Users</h2>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead>
-              <tbody>{(users.data || []).map((user) => <tr key={user._id}><td>{user.name}</td><td>{user.role}</td><td><StatusBadge status={user.status} /></td><td>{dayjs(user.createdAt).format("DD MMM YYYY")}</td></tr>)}</tbody>
+              <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Joined</th><th>Action</th></tr></thead>
+              <tbody>{(users.data || []).map((user) => <tr key={user._id}><td>{user.name}<br />{user.email}</td><td>{user.role}</td><td><StatusBadge status={user.status} /></td><td>{dayjs(user.createdAt).format("DD MMM YYYY")}</td><td className="table-action-cell"><button className="button tiny danger" disabled={user.status === "suspended"} onClick={() => suspendUser.mutate(user._id)}>Suspend</button><button className="button tiny" onClick={() => reactivateUser.mutate(user._id)}>Reactivate</button></td></tr>)}</tbody>
             </table>
           </div>
         </section>
       </div>
+
+      <div className="work-grid">
+        <section className="panel">
+          <h2>Product moderation</h2>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Product</th><th>Seller</th><th>Price</th><th>Approval</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>{(adminProducts.data || []).slice(0, 20).map((product) => <tr key={product._id}><td>{product.name}</td><td>{product.sellerId?.name}</td><td>BDT {product.price}</td><td><StatusBadge status={product.approvalStatus} /></td><td><StatusBadge status={product.status} /></td><td className="table-action-cell"><button className="button tiny" onClick={() => moderateProduct.mutate({ id: product._id, payload: { approvalStatus: "approved", status: "active" } })}>Approve</button><button className="button tiny danger" onClick={() => moderateProduct.mutate({ id: product._id, payload: { approvalStatus: "rejected", status: "inactive" } })}>Reject</button></td></tr>)}</tbody>
+            </table>
+          </div>
+        </section>
+        <section className="panel">
+          <h2>Orders overview</h2>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Order</th><th>Buyer</th><th>Total</th><th>Payment</th><th>Fulfillment</th></tr></thead>
+              <tbody>{(adminOrders.data || []).slice(0, 20).map((order) => <tr key={order._id}><td>{order.orderNo}</td><td>{order.buyerId?.name}</td><td>BDT {order.total}</td><td><StatusBadge status={order.paymentStatus} /></td><td><StatusBadge status={order.fulfillmentStatus} /></td></tr>)}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div className="work-grid">
+        <section className="panel">
+          <h2>EMI portfolio</h2>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Status</th><th>Loans</th><th>Principal</th><th>Total payable</th></tr></thead>
+              <tbody>{(portfolio.data || []).map((row) => <tr key={row.status}><td><StatusBadge status={row.status} /></td><td>{row.count}</td><td>BDT {Math.round(row.principal || 0)}</td><td>BDT {Math.round(row.totalPayable || 0)}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </section>
+        <section className="panel">
+          <h2>Disputes and returns</h2>
+          <div className="list-stack">
+            {(disputes.data || []).slice(0, 5).map((item) => <div className="list-row" key={item._id}><div><strong>{item.subject}</strong><span>{item.raisedBy?.email}</span></div><StatusBadge status={item.status} /></div>)}
+            {(returns.data || []).slice(0, 5).map((item) => <div className="list-row" key={item._id}><div><strong>Return request</strong><span>{item.buyerId?.email} | {item.reason}</span></div><StatusBadge status={item.status} /></div>)}
+          </div>
+        </section>
+      </div>
+
+      {settingsForm && (
+        <section className="panel">
+          <h2>System settings</h2>
+          <div className="form-grid compact">
+            <label>Min tenure
+              <input type="number" value={settingsForm.allowedTenureMin} onChange={(e) => setSettingsForm({ ...settingsForm, allowedTenureMin: Number(e.target.value) })} />
+            </label>
+            <label>Max tenure
+              <input type="number" value={settingsForm.allowedTenureMax} onChange={(e) => setSettingsForm({ ...settingsForm, allowedTenureMax: Number(e.target.value) })} />
+            </label>
+            <label>Max interest rate
+              <input type="number" value={settingsForm.maxInterestRate} onChange={(e) => setSettingsForm({ ...settingsForm, maxInterestRate: Number(e.target.value) })} />
+            </label>
+            <label>Default late fee type
+              <select value={settingsForm.defaultLateFeeType} onChange={(e) => setSettingsForm({ ...settingsForm, defaultLateFeeType: e.target.value })}>
+                <option value="none">None</option>
+                <option value="fixed">Fixed</option>
+                <option value="daily">Daily</option>
+                <option value="percentage">Percentage</option>
+              </select>
+            </label>
+            <label>Default late fee value
+              <input type="number" value={settingsForm.defaultLateFeeValue} onChange={(e) => setSettingsForm({ ...settingsForm, defaultLateFeeValue: Number(e.target.value) })} />
+            </label>
+            <label className="inline-check"><input type="checkbox" checked={settingsForm.stripeTestMode} onChange={(e) => setSettingsForm({ ...settingsForm, stripeTestMode: e.target.checked })} /> Stripe test mode</label>
+            <label className="inline-check"><input type="checkbox" checked={settingsForm.notificationEmailEnabled} onChange={(e) => setSettingsForm({ ...settingsForm, notificationEmailEnabled: e.target.checked })} /> Email notifications</label>
+            <label className="inline-check"><input type="checkbox" checked={settingsForm.notificationSmsEnabled} onChange={(e) => setSettingsForm({ ...settingsForm, notificationSmsEnabled: e.target.checked })} /> SMS notifications</label>
+          </div>
+          <button className="button" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>Save settings</button>
+        </section>
+      )}
       <section className="panel">
         <h2>Audit trail</h2>
         <div className="table-wrap">

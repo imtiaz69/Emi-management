@@ -2,6 +2,7 @@ const express = require("express");
 const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
+const { requireVerified } = require("../middleware/security");
 const { objectId, optionalObjectId, validateBody, z } = require("../middleware/validate");
 const { recordPayment } = require("../services/loanService");
 const { createMockGatewayReference } = require("../services/paymentService");
@@ -32,6 +33,7 @@ router.post(
   authenticate,
   authorize("seller"),
   requireActiveSeller,
+  requireVerified,
   validateBody(manualPaymentSchema),
   asyncHandler(async (req, res) => {
     const transaction = await recordPayment(req.body, req.user._id, { requireSellerOwnership: true });
@@ -43,6 +45,7 @@ router.post(
   "/mock-gateway",
   authenticate,
   authorize("buyer"),
+  requireVerified,
   validateBody(mockPaymentSchema),
   asyncHandler(async (req, res) => {
     const transaction = await recordPayment(

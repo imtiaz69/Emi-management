@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, CheckCircle2, Eye, Package, RefreshCcw, XCircle } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -15,8 +16,10 @@ const tabs = [
   { key: "recordPayment", label: "Record payment" },
   { key: "addProduct", label: "Add products" },
   { key: "myProducts", label: "My products" },
+  { key: "orders", label: "Orders" },
   { key: "activeLoans", label: "Active EMI loans" },
   { key: "paymentHistory", label: "Payment history" },
+  { key: "reports", label: "Reports" },
   { key: "kycRequests", label: "KYC requests" }
 ];
 
@@ -61,6 +64,8 @@ export default function SellerDashboard() {
   const [paymentForm, setPaymentForm] = useState({ loanId: "", amount: "", method: "cash", allocationMode: "next_due", notes: "" });
   const [kycRejectReason, setKycRejectReason] = useState("");
   const [loanDetailsModal, setLoanDetailsModal] = useState(null);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [stockAdjustment, setStockAdjustment] = useState({ productId: "", quantity: "", note: "" });
 
   const summary = useQuery({ queryKey: ["summary"], queryFn: async () => (await api.get("/reports/summary")).data });
   const products = useQuery({ queryKey: ["seller-products"], queryFn: async () => (await api.get("/products/mine")).data });
@@ -71,6 +76,12 @@ export default function SellerDashboard() {
   const applications = useQuery({ queryKey: ["emi-applications"], queryFn: async () => (await api.get("/emi-applications")).data });
   const overdue = useQuery({ queryKey: ["overdue"], queryFn: async () => (await api.get("/reports/overdue")).data });
   const collections = useQuery({ queryKey: ["collections"], queryFn: async () => (await api.get("/reports/collections")).data });
+  const orders = useQuery({ queryKey: ["seller-orders"], queryFn: async () => (await api.get("/orders")).data });
+  const salesReport = useQuery({ queryKey: ["report-sales"], queryFn: async () => (await api.get("/reports/sales")).data });
+  const portfolioReport = useQuery({ queryKey: ["report-portfolio"], queryFn: async () => (await api.get("/reports/emi-portfolio")).data });
+  const orderReport = useQuery({ queryKey: ["report-orders"], queryFn: async () => (await api.get("/reports/orders")).data });
+  const downPaymentReport = useQuery({ queryKey: ["report-down-payments"], queryFn: async () => (await api.get("/reports/down-payments")).data });
+  const paymentMethods = useQuery({ queryKey: ["report-payment-methods"], queryFn: async () => (await api.get("/reports/payment-methods")).data });
 
   const activeLoans = (loans.data || []).filter((loan) => loan.status === "active");
   const activeProducts = useMemo(() => (products.data || []).filter((product) => product.status === "active"), [products.data]);
@@ -134,6 +145,32 @@ export default function SellerDashboard() {
     onError: (err) => {
       alert(err.response?.data?.message || "Failed to create offline loan.");
     }
+  });
+
+  const updateProduct = useMutation({
+    mutationFn: async (payload) => api.patch(`/products/${payload._id}`, payload),
+    onSuccess: () => {
+      setEditingProduct(null);
+      refreshData();
+      alert("Product updated successfully.");
+    },
+    onError: (err) => alert(err.response?.data?.message || "Failed to update product.")
+  });
+
+  const archiveProduct = useMutation({
+    mutationFn: async (productId) => api.delete(`/products/${productId}`),
+    onSuccess: () => refreshData(),
+    onError: (err) => alert(err.response?.data?.message || "Failed to archive product.")
+  });
+
+  const adjustStock = useMutation({
+    mutationFn: async () => api.post("/inventory/adjust", { ...stockAdjustment, quantity: Number(stockAdjustment.quantity) }),
+    onSuccess: () => {
+      setStockAdjustment({ productId: "", quantity: "", note: "" });
+      refreshData();
+      alert("Stock adjusted successfully.");
+    },
+    onError: (err) => alert(err.response?.data?.message || "Failed to adjust stock.")
   });
 
   const previewSchedule = useMutation({
@@ -202,6 +239,16 @@ export default function SellerDashboard() {
     }
   });
 
+  const updateOrderStatus = useMutation({
+    mutationFn: async ({ orderId, fulfillmentStatus }) => api.patch(`/orders/${orderId}/status`, { fulfillmentStatus }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["seller-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["report-orders"] });
+      alert("Order status updated.");
+    },
+    onError: (err) => alert(err.response?.data?.message || "Failed to update order.")
+  });
+
   async function refreshData() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["summary"] }),
@@ -212,7 +259,13 @@ export default function SellerDashboard() {
       queryClient.invalidateQueries({ queryKey: ["pending-kyc"] }),
       queryClient.invalidateQueries({ queryKey: ["emi-applications"] }),
       queryClient.invalidateQueries({ queryKey: ["overdue"] }),
-      queryClient.invalidateQueries({ queryKey: ["collections"] })
+      queryClient.invalidateQueries({ queryKey: ["collections"] }),
+      queryClient.invalidateQueries({ queryKey: ["seller-orders"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-sales"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-portfolio"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-orders"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-down-payments"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-payment-methods"] })
     ]);
   }
 
@@ -625,21 +678,87 @@ export default function SellerDashboard() {
                 </div>
               </div>
 
+              <div className="form-grid compact">
+                <SearchableSelect
+                  label="Stock product"
+                  value={stockAdjustment.productId}
+                  onChange={(productId) => setStockAdjustment({ ...stockAdjustment, productId })}
+                  options={products.data || []}
+                  placeholder="Select product"
+                  searchPlaceholder="Search product for stock adjustment"
+                  getOptionValue={(product) => product._id}
+                  getOptionLabel={(product) => `${product.name} - stock ${product.stock}`}
+                />
+                <label>Adjustment quantity
+                  <input type="number" placeholder="Example: 5 or -2" value={stockAdjustment.quantity} onChange={(e) => setStockAdjustment({ ...stockAdjustment, quantity: e.target.value })} />
+                </label>
+                <label>Adjustment note
+                  <input placeholder="Example: Supplier restock" value={stockAdjustment.note} onChange={(e) => setStockAdjustment({ ...stockAdjustment, note: e.target.value })} />
+                </label>
+              </div>
+              <button className="button secondary" onClick={() => adjustStock.mutate()} disabled={!stockAdjustment.productId || !stockAdjustment.quantity || adjustStock.isPending}>Adjust stock</button>
+
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Image</th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>EMI</th></tr></thead>
+                  <thead><tr><th>Image</th><th>Name</th><th>SKU</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>EMI</th><th>Actions</th></tr></thead>
                   <tbody>
                     {(products.data || []).length === 0 ? (
-                      <tr><td colSpan="6" style={{ textAlign: "center", color: "#888" }}>No products available</td></tr>
+                      <tr><td colSpan="9" style={{ textAlign: "center", color: "#888" }}>No products available</td></tr>
                     ) : (
                       (products.data || []).map((product) => (
                         <tr key={product._id}>
                           <td>{product.images?.[0]?.path ? <img className="table-thumb" src={product.images[0].path} alt={product.name} /> : <span className="badge">No image</span>}</td>
                           <td>{product.name}</td>
+                          <td>{product.sku || "-"}</td>
                           <td>{product.category}</td>
                           <td>BDT {product.price}</td>
-                          <td>{product.stock}</td>
+                          <td>{product.stock} {product.stock <= product.lowStockThreshold && <span className="badge overdue">Low</span>}</td>
+                          <td><StatusBadge status={product.status} /></td>
                           <td>{product.emiAvailable ? "Yes" : "No"}</td>
+                          <td className="table-action-cell">
+                            <button className="button tiny" onClick={() => setEditingProduct({ ...product })}>Edit</button>
+                            <button className="button tiny ghost" onClick={() => updateProduct.mutate({ ...product, status: product.status === "active" ? "inactive" : "active" })}>{product.status === "active" ? "Deactivate" : "Activate"}</button>
+                            <button className="button tiny danger" onClick={() => archiveProduct.mutate(product._id)}>Archive</button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "orders" && (
+            <section className="panel">
+              <div className="page-title">
+                <div>
+                  <h2>Seller order queue</h2>
+                  <p>Confirm, ship, deliver, or inspect orders connected to your shop.</p>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Order</th><th>Buyer</th><th>Total</th><th>Payment</th><th>Fulfillment</th><th>Address</th><th>Linked EMI</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {(orders.data || []).length === 0 ? (
+                      <tr><td colSpan="8" style={{ textAlign: "center", color: "#888" }}>No seller orders yet.</td></tr>
+                    ) : (
+                      (orders.data || []).map((order) => (
+                        <tr key={order._id}>
+                          <td><Link to={`/orders/${order._id}`}>{order.orderNo}</Link></td>
+                          <td>{order.buyerId?.name || "-"}</td>
+                          <td>{formatBDT(order.total)}</td>
+                          <td><StatusBadge status={order.paymentStatus} /></td>
+                          <td><StatusBadge status={order.fulfillmentStatus} /></td>
+                          <td>{order.shippingAddress?.line1}, {order.shippingAddress?.city}</td>
+                          <td>{(order.items || []).some((item) => item.loanId) ? "Yes" : "No"}</td>
+                          <td className="table-action-cell">
+                            <Link className="button tiny" to={`/orders/${order._id}`}>Details</Link>
+                            <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "confirmed" })}>Confirm</button>
+                            <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "shipped" })}>Ship</button>
+                            <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "delivered" })}>Deliver</button>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -767,6 +886,49 @@ export default function SellerDashboard() {
               </div>
             </section>
           )}
+
+          {activeTab === "reports" && (
+            <section className="panel">
+              <div className="page-title">
+                <div>
+                  <h2>Seller reports</h2>
+                  <p>Sales, EMI portfolio, order fulfillment, down payments, and payment method split.</p>
+                </div>
+              </div>
+              <div className="stats-grid">
+                <StatCard label="Sales principal" value={formatBDT(salesReport.data?.totals?.principal)} tone="green" />
+                <StatCard label="Portfolio outstanding" value={formatBDT(portfolioReport.data?.totals?.outstanding)} tone="red" />
+                <StatCard label="Order total" value={formatBDT(orderReport.data?.totals?.orderTotal)} tone="purple" />
+                <StatCard label="Down payments" value={formatBDT(downPaymentReport.data?.totals?.amount)} />
+              </div>
+              <div className="button-row">
+                <button className="button tiny" onClick={() => openProtectedFile("/reports/export?type=sales&format=excel")}>Sales Excel</button>
+                <button className="button tiny ghost" onClick={() => openProtectedFile("/reports/export?type=orders&format=excel")}>Orders Excel</button>
+                <button className="button tiny ghost" onClick={() => openProtectedFile("/reports/export?type=emi-portfolio&format=pdf")}>Portfolio PDF</button>
+                <button className="button tiny ghost" onClick={() => openProtectedFile("/reports/export?type=down-payments&format=excel")}>Down payment Excel</button>
+              </div>
+              <div className="work-grid">
+                <section>
+                  <h3>Payment method split</h3>
+                  <div className="table-wrap">
+                    <table>
+                      <thead><tr><th>Method</th><th>Count</th><th>Amount</th></tr></thead>
+                      <tbody>{(paymentMethods.data || []).map((row) => <tr key={row.method}><td>{row.method}</td><td>{row.count}</td><td>{formatBDT(row.amount)}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </section>
+                <section>
+                  <h3>Sales by product/category</h3>
+                  <div className="table-wrap">
+                    <table>
+                      <thead><tr><th>Product</th><th>Category</th><th>Principal</th><th>Total</th><th>Status</th></tr></thead>
+                      <tbody>{(salesReport.data?.rows || []).slice(0, 10).map((row, index) => <tr key={`${row.product}-${index}`}><td>{row.product}</td><td>{row.category}</td><td>{formatBDT(row.principal)}</td><td>{formatBDT(row.totalPayable)}</td><td>{row.status}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </section>
+          )}
         </main>
       </div>
 
@@ -782,6 +944,45 @@ export default function SellerDashboard() {
               <p><strong>Status:</strong> {loanDetailsModal.status}</p>
             </div>
             <button type="button" className="button" onClick={() => setLoanDetailsModal(null)} style={{ marginTop: "12px" }}>Close</button>
+          </form>
+        </div>
+      )}
+
+      {editingProduct && (
+        <div className="modal-backdrop" onClick={() => setEditingProduct(null)}>
+          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); updateProduct.mutate(editingProduct); }}>
+            <h2>Edit product</h2>
+            <div className="form-grid compact">
+              <label>Product name
+                <input value={editingProduct.name || ""} onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })} />
+              </label>
+              <label>SKU
+                <input value={editingProduct.sku || ""} onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })} />
+              </label>
+              <label>Category
+                <input value={editingProduct.category || ""} onChange={(e) => setEditingProduct({ ...editingProduct, category: e.target.value })} />
+              </label>
+              <label>Price
+                <input type="number" value={editingProduct.price || ""} onChange={(e) => setEditingProduct({ ...editingProduct, price: Number(e.target.value) })} />
+              </label>
+              <label>Low stock alert
+                <input type="number" value={editingProduct.lowStockThreshold ?? 3} onChange={(e) => setEditingProduct({ ...editingProduct, lowStockThreshold: Number(e.target.value) })} />
+              </label>
+              <label>Status
+                <select value={editingProduct.status || "active"} onChange={(e) => setEditingProduct({ ...editingProduct, status: e.target.value })}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </label>
+            </div>
+            <label>Description
+              <textarea value={editingProduct.description || ""} onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })} />
+            </label>
+            <label className="inline-check"><input type="checkbox" checked={Boolean(editingProduct.emiAvailable)} onChange={(e) => setEditingProduct({ ...editingProduct, emiAvailable: e.target.checked })} /> EMI available</label>
+            <div className="button-row">
+              <button className="button" disabled={updateProduct.isPending}>Save changes</button>
+              <button type="button" className="button secondary" onClick={() => setEditingProduct(null)}>Cancel</button>
+            </div>
           </form>
         </div>
       )}
