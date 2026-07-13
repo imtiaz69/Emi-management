@@ -2,10 +2,10 @@ const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
-    loanId: { type: mongoose.Schema.Types.ObjectId, ref: "Loan", required: true, index: true },
+    loanId: { type: mongoose.Schema.Types.ObjectId, ref: "Loan", index: true },
     scheduleId: { type: mongoose.Schema.Types.ObjectId, ref: "EMISchedule" },
-    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
-    transactionType: { type: String, enum: ["installment", "down_payment", "refund", "fee"], default: "installment", index: true },
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", index: true },
+    transactionType: { type: String, enum: ["installment", "down_payment", "order_payment", "refund", "fee"], default: "installment", index: true },
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     amount: { type: Number, required: true, min: 1 },

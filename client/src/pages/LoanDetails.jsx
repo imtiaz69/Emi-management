@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { api } from "../api/http";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
+import { notifyError, notifySuccess } from "../utils/toast.js";
 
 export default function LoanDetails() {
   const { id } = useParams();
@@ -21,7 +22,11 @@ export default function LoanDetails() {
   });
   const acceptAgreement = useMutation({
     mutationFn: async () => api.patch(`/loans/${id}/agreement/accept`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["loan-agreement", id] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["loan-agreement", id] });
+      notifySuccess("Loan agreement accepted.");
+    },
+    onError: (err) => notifyError(err, "Unable to accept loan agreement.")
   });
 
   const schedule = scheduleQuery.data || [];

@@ -15,6 +15,54 @@ function buildReceiptNo(prefix = "R") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
 
+function getScheduleBalance(schedule) {
+  return Math.max(roundMoney(Number(schedule.amountDue || 0) + Number(schedule.lateFee || 0) - Number(schedule.amountPaid || 0)), 0);
+}
+
+function normalizeInstallmentCount(installmentCount) {
+  const count = Number(installmentCount === undefined || installmentCount === null || installmentCount === "" ? 1 : installmentCount);
+  if (!Number.isInteger(count) || count < 1 || count > 60) {
+    const error = new Error("Installment count must be between 1 and 60");
+    error.status = 400;
+    throw error;
+  }
+  return count;
+}
+
+function selectPaymentAllocationSchedules(schedules, { scheduleId, allocationMode = "advance", installmentCount } = {}) {
+  if (scheduleId) return schedules;
+  if (allocationMode === "next_due") return schedules.slice(0, 1);
+  if (allocationMode === "next_n") return schedules.slice(0, normalizeInstallmentCount(installmentCount));
+  return schedules;
+}
+
+async function getPaymentAllocationPreview({ loanId, scheduleId, allocationMode = "advance", installmentCount }, { session } = {}) {
+  const payableStatuses = ["pending", "partial", "overdue"];
+  const schedulesQuery = scheduleId ? { _id: scheduleId, loanId } : { loanId, status: { $in: payableStatuses } };
+  if (!scheduleId && allocationMode === "overdue") schedulesQuery.status = "overdue";
+
+  const query = EMISchedule.find(schedulesQuery).sort({ dueDate: 1 });
+  if (session) query.session(session);
+  const schedules = await query;
+  if (!schedules.length) {
+    const error = new Error("No payable schedule found");
+    error.status = 400;
+    throw error;
+  }
+
+  const allocationSchedules = selectPaymentAllocationSchedules(schedules, { scheduleId, allocationMode, installmentCount });
+  if (!allocationSchedules.length) {
+    const error = new Error("No payable schedule found for the selected payment option");
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    schedules: allocationSchedules,
+    outstanding: allocationSchedules.reduce((sum, schedule) => sum + getScheduleBalance(schedule), 0)
+  };
+}
+
 async function createApplicationForLoan(loan, session) {
   const risk = await calculateBuyerRiskProfile({
     buyerId: loan.buyerId,
@@ -103,6 +151,8 @@ async function createLoanWithSchedule(payload, actorId, { requested = false } = 
           sellerId: payload.sellerId,
           buyerId: payload.buyerId,
           productId: payload.productId || undefined,
+          selectedColorName: payload.selectedColorName,
+          selectedColorHex: payload.selectedColorHex,
           source: payload.source || "offline",
           principal,
           downPayment: Number(payload.downPayment || 0),
@@ -231,7 +281,7 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
 }
 
 async function recordPayment(
-  { loanId, amount, method, paymentDate, scheduleId, gatewayRef, notes, allocationMode = "advance" },
+  { loanId, amount, method, paymentDate, scheduleId, gatewayRef, notes, allocationMode = "advance", installmentCount },
   actorId,
   { requireSellerOwnership = false, requireBuyerOwnership = false } = {}
 ) {
@@ -258,13 +308,10 @@ async function recordPayment(
       throw error;
     }
 
-    const payableStatuses = ["pending", "partial", "overdue"];
-    const schedulesQuery = scheduleId ? { _id: scheduleId, loanId } : { loanId, status: { $in: payableStatuses } };
-    if (!scheduleId && allocationMode === "overdue") schedulesQuery.status = "overdue";
-    const schedules = await EMISchedule.find(schedulesQuery).sort({ dueDate: 1 }).session(session);
-    if (!schedules.length) throw new Error("No payable schedule found");
-    const allocationSchedules = !scheduleId && allocationMode === "next_due" ? schedules.slice(0, 1) : schedules;
-    const outstanding = allocationSchedules.reduce((sum, schedule) => sum + Math.max(roundMoney(schedule.amountDue + schedule.lateFee - schedule.amountPaid), 0), 0);
+    const { schedules: allocationSchedules, outstanding } = await getPaymentAllocationPreview(
+      { loanId, scheduleId, allocationMode, installmentCount },
+      { session }
+    );
     if (remaining > outstanding) {
       const error = new Error(`Payment cannot exceed selected outstanding amount BDT ${Math.round(outstanding)}`);
       error.status = 400;
@@ -274,7 +321,7 @@ async function recordPayment(
     let lastScheduleId = allocationSchedules[0]._id;
     for (const schedule of allocationSchedules) {
       if (remaining <= 0) break;
-      const due = roundMoney(schedule.amountDue + schedule.lateFee - schedule.amountPaid);
+      const due = getScheduleBalance(schedule);
       const applied = Math.min(remaining, due);
       schedule.amountPaid = roundMoney(schedule.amountPaid + applied);
       schedule.status = schedule.amountPaid >= roundMoney(schedule.amountDue + schedule.lateFee) ? "paid" : "partial";
@@ -323,4 +370,13 @@ async function recordPayment(
   }
 }
 
-module.exports = { buildReceiptNo, createApplicationForLoan, createLoanWithSchedule, approveLoanRequest, recordDownPayment, recordPayment };
+module.exports = {
+  buildReceiptNo,
+  createApplicationForLoan,
+  createLoanWithSchedule,
+  approveLoanRequest,
+  getPaymentAllocationPreview,
+  recordDownPayment,
+  recordPayment,
+  selectPaymentAllocationSchedules
+};

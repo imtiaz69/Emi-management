@@ -6,6 +6,7 @@ const paymentLogSchema = new mongoose.Schema(
     sessionId: { type: String, index: true },
     paymentIntentId: { type: String, index: true },
     loanId: { type: mongoose.Schema.Types.ObjectId, ref: "Loan" },
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     amount: { type: Number, default: 0 },
     currency: String,

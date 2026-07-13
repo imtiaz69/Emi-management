@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
+import { notifyError, notifySuccess } from "../utils/toast.js";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -24,9 +25,11 @@ export default function Register() {
     setError("");
     try {
       const { user } = await register({ ...form, role, ownerName: form.name });
+      notifySuccess(user.role === "seller" ? "Seller account created. Waiting for admin approval." : "Buyer account created successfully.");
       navigate(user.role === "seller" ? "/seller" : "/buyer");
     } catch (err) {
       setError(err.response?.data?.message || "Registration failed");
+      notifyError(err, "Registration failed");
     }
   }
 

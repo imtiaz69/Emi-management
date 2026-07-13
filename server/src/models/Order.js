@@ -16,12 +16,15 @@ const addressSchema = new mongoose.Schema(
 const orderItemSchema = new mongoose.Schema(
   {
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+    cartItemId: { type: mongoose.Schema.Types.ObjectId },
     sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     name: { type: String, required: true },
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true, min: 0 },
     totalPrice: { type: Number, required: true, min: 0 },
     financeMode: { type: String, enum: ["cash", "emi"], default: "cash" },
+    selectedColorName: { type: String, trim: true },
+    selectedColorHex: { type: String, trim: true },
     fulfillmentStatus: {
       type: String,
       enum: ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "returned"],

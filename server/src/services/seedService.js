@@ -70,9 +70,44 @@ async function seedDemoData({ reset = false } = {}) {
   await BuyerProfile.findOneAndUpdate({ userId: buyer._id }, { userId: buyer._id, address: "Akhalia, Sylhet", nidNumber: "1234567890" }, { upsert: true });
 
   const products = await Product.insertMany([
-    { sellerId: seller._id, name: "Smartphone A15", description: "4G smartphone with EMI support", category: "Mobile", price: 22000, stock: 8, emiAvailable: true },
-    { sellerId: seller._id, name: "LED TV 32 inch", description: "Energy efficient TV", category: "Electronics", price: 32000, stock: 2, emiAvailable: true },
-    { sellerId: seller._id, name: "Office Chair", description: "Comfortable chair", category: "Furniture", price: 6500, stock: 12, emiAvailable: false }
+    {
+      sellerId: seller._id,
+      name: "Smartphone A15",
+      description: "4G smartphone with EMI support",
+      category: "Mobile",
+      price: 22000,
+      stock: 8,
+      emiAvailable: true,
+      emiInterestRate: 12,
+      emiInterestType: "flat",
+      emiMinDownPayment: 4000,
+      emiMaxTenureMonths: 12,
+      colors: [{ name: "Black", hex: "#111827" }, { name: "Blue", hex: "#2563eb" }]
+    },
+    {
+      sellerId: seller._id,
+      name: "LED TV 32 inch",
+      description: "Energy efficient TV",
+      category: "Electronics",
+      price: 32000,
+      stock: 2,
+      emiAvailable: true,
+      emiInterestRate: 10,
+      emiInterestType: "reducing",
+      emiMinDownPayment: 6000,
+      emiMaxTenureMonths: 18,
+      colors: [{ name: "Black", hex: "#020617" }]
+    },
+    {
+      sellerId: seller._id,
+      name: "Office Chair",
+      description: "Comfortable chair",
+      category: "Furniture",
+      price: 6500,
+      stock: 12,
+      emiAvailable: false,
+      colors: [{ name: "Gray", hex: "#6b7280" }, { name: "Brown", hex: "#92400e" }]
+    }
   ]);
 
   const loan = await createLoanWithSchedule(

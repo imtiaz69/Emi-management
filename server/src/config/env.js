@@ -12,8 +12,9 @@ const envSchema = z.object({
   CLIENT_URL: z.string().url().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  STRIPE_CURRENCY: z.string().default("usd"),
+  STRIPE_CURRENCY: z.string().default("bdt"),
   STRIPE_BDT_PER_USD: z.coerce.number().positive().default(120),
+  ALLOW_STRIPE_CURRENCY_CONVERSION: z.string().optional(),
   ALLOW_STRIPE_RETURN_CONFIRM: z.string().optional(),
   AUTO_SEED: z.string().optional(),
   UPLOAD_DIR: z.string().default("uploads")

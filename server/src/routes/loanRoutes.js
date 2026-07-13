@@ -5,6 +5,7 @@ const EMIApplication = require("../models/EMIApplication");
 const KYCDocument = require("../models/KYCDocument");
 const KYCReview = require("../models/KYCReview");
 const LoanAgreement = require("../models/LoanAgreement");
+const Product = require("../models/Product");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize, requireActiveSeller } = require("../middleware/auth");
 const { requireVerified } = require("../middleware/security");
@@ -38,7 +39,8 @@ const offlineLoanSchema = loanPreviewSchema.extend({
 });
 const marketplaceLoanRequestSchema = loanPreviewSchema.extend({
   sellerId: objectId,
-  productId: objectId
+  productId: objectId,
+  selectedColorName: z.string().trim().min(1).max(40).optional()
 });
 const rejectLoanSchema = z.object({
   reason: z.string().trim().max(500).optional().default("Rejected by seller")
@@ -132,7 +134,34 @@ router.post(
   validateBody(marketplaceLoanRequestSchema),
   asyncHandler(async (req, res) => {
     await assertBuyerReadyForEmi(req.user._id);
-    const loan = await createLoanWithSchedule({ ...req.body, buyerId: req.user._id, source: "marketplace" }, req.user._id, { requested: true });
+    const product = await Product.findOne({ _id: req.body.productId, sellerId: req.body.sellerId, status: "active" });
+    if (!product) return res.status(404).json({ message: "Product not found" });
+    if (!product.emiAvailable) return res.status(400).json({ message: "This product is not EMI available" });
+    const selectedColor = resolveSelectedColor(product, req.body.selectedColorName);
+    const downPayment = Number(req.body.downPayment || 0);
+    const maxTenure = Number(product.emiMaxTenureMonths || 12);
+    if (downPayment < Number(product.emiMinDownPayment || 0)) {
+      return res.status(400).json({ message: `Minimum down payment for this product is BDT ${product.emiMinDownPayment || 0}` });
+    }
+    if (Number(req.body.tenureMonths) > maxTenure) {
+      return res.status(400).json({ message: `Maximum EMI tenure for this product is ${maxTenure} months` });
+    }
+    const loan = await createLoanWithSchedule(
+      {
+        ...req.body,
+        buyerId: req.user._id,
+        source: "marketplace",
+        principal: product.price,
+        downPayment,
+        interestRate: product.emiInterestRate || 0,
+        interestType: product.emiInterestType || "flat",
+        tenureMonths: Number(req.body.tenureMonths),
+        selectedColorName: selectedColor.name,
+        selectedColorHex: selectedColor.hex
+      },
+      req.user._id,
+      { requested: true }
+    );
     res.status(201).json(loan);
   })
 );
@@ -224,6 +253,24 @@ function sanitizeKycDocument(doc) {
   };
 }
 
+function resolveSelectedColor(product, requestedColorName) {
+  const colors = normalizeProductColors(product);
+  const selected = requestedColorName
+    ? colors.find((color) => color.name.toLowerCase() === requestedColorName.toLowerCase())
+    : colors[0];
+  if (!selected) {
+    const error = new Error("Please select a valid product color");
+    error.status = 400;
+    throw error;
+  }
+  return selected;
+}
+
+function normalizeProductColors(product) {
+  const colors = (product.colors || []).filter((color) => color?.name);
+  return colors.length ? colors : [{ name: "Default", hex: "#64748b" }];
+}
+
 async function buildPaymentSummary(loanId) {
   const payableRows = await EMISchedule.find({ loanId, status: { $in: ["pending", "partial", "overdue"] } }).sort({ dueDate: 1 }).lean();
   const balances = payableRows.map((row) => ({
@@ -233,7 +280,14 @@ async function buildPaymentSummary(loanId) {
   return {
     nextDueAmount: balances[0]?.balance || 0,
     overdueAmount: balances.filter((row) => row.status === "overdue").reduce((sum, row) => sum + row.balance, 0),
-    outstandingAmount: balances.reduce((sum, row) => sum + row.balance, 0)
+    outstandingAmount: balances.reduce((sum, row) => sum + row.balance, 0),
+    payableInstallments: balances.map((row) => ({
+      _id: row._id,
+      installmentNo: row.installmentNo,
+      dueDate: row.dueDate,
+      status: row.status,
+      balance: row.balance
+    }))
   };
 }
 

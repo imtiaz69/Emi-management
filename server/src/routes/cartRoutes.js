@@ -11,11 +11,14 @@ router.use(authenticate, authorize("buyer"));
 const cartItemSchema = z.object({
   productId: objectId,
   quantity: z.coerce.number().int().min(1).max(50).optional().default(1),
-  selectedFinanceMode: z.enum(["cash", "emi"]).optional().default("cash")
+  selectedFinanceMode: z.enum(["cash", "emi"]).optional().default("cash"),
+  selectedColorName: z.string().trim().min(1).max(40).optional(),
+  replaceExisting: z.boolean().optional().default(false)
 });
 const updateItemSchema = z.object({
   quantity: z.coerce.number().int().min(1).max(50).optional(),
-  selectedFinanceMode: z.enum(["cash", "emi"]).optional()
+  selectedFinanceMode: z.enum(["cash", "emi"]).optional(),
+  selectedColorName: z.string().trim().min(1).max(40).optional()
 });
 
 router.get(
@@ -34,12 +37,15 @@ router.post(
     if (!product) return res.status(404).json({ message: "Product not found" });
     if (product.stock < req.body.quantity) return res.status(400).json({ message: "Not enough stock available" });
     if (req.body.selectedFinanceMode === "emi" && !product.emiAvailable) return res.status(400).json({ message: "This product is not EMI available" });
+    const selectedColor = resolveSelectedColor(product, req.body.selectedColorName);
 
     const cart = await getOrCreateCart(req.user._id);
-    const existing = cart.items.find((item) => item.productId.toString() === product._id.toString());
+    const existing = cart.items.find((item) => item.productId.toString() === product._id.toString() && item.selectedColorName === selectedColor.name);
     if (existing) {
-      existing.quantity = Math.min(existing.quantity + req.body.quantity, product.stock);
+      existing.quantity = req.body.replaceExisting ? req.body.quantity : Math.min(existing.quantity + req.body.quantity, product.stock);
       existing.selectedFinanceMode = req.body.selectedFinanceMode;
+      existing.selectedColorName = selectedColor.name;
+      existing.selectedColorHex = selectedColor.hex;
       existing.unitPrice = product.price;
     } else {
       cart.items.push({
@@ -47,7 +53,9 @@ router.post(
         sellerId: product.sellerId,
         quantity: req.body.quantity,
         unitPrice: product.price,
-        selectedFinanceMode: req.body.selectedFinanceMode
+        selectedFinanceMode: req.body.selectedFinanceMode,
+        selectedColorName: selectedColor.name,
+        selectedColorHex: selectedColor.hex
       });
     }
     await cart.save();
@@ -71,6 +79,11 @@ router.patch(
     if (req.body.selectedFinanceMode) {
       if (req.body.selectedFinanceMode === "emi" && !product.emiAvailable) return res.status(400).json({ message: "This product is not EMI available" });
       item.selectedFinanceMode = req.body.selectedFinanceMode;
+    }
+    if (req.body.selectedColorName) {
+      const selectedColor = resolveSelectedColor(product, req.body.selectedColorName);
+      item.selectedColorName = selectedColor.name;
+      item.selectedColorHex = selectedColor.hex;
     }
     item.unitPrice = product.price;
     await cart.save();
@@ -104,6 +117,24 @@ async function getOrCreateCart(buyerId) {
 
 async function populateCart(id) {
   return Cart.findById(id).populate("items.productId").populate("items.sellerId", "name phone");
+}
+
+function resolveSelectedColor(product, requestedColorName) {
+  const colors = normalizeProductColors(product);
+  const selected = requestedColorName
+    ? colors.find((color) => color.name.toLowerCase() === requestedColorName.toLowerCase())
+    : colors[0];
+  if (!selected) {
+    const error = new Error("Please select a valid product color");
+    error.status = 400;
+    throw error;
+  }
+  return selected;
+}
+
+function normalizeProductColors(product) {
+  const colors = (product.colors || []).filter((color) => color?.name);
+  return colors.length ? colors : [{ name: "Default", hex: "#64748b" }];
 }
 
 module.exports = router;

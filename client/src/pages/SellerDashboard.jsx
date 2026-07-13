@@ -8,6 +8,7 @@ import { api, openProtectedFile } from "../api/http";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { generateReceiptPdf } from "../utils/receipt.js";
+import { notifyError, notifyInfo, notifySuccess } from "../utils/toast.js";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -54,10 +55,68 @@ function SearchableSelect({ label, value, onChange, options, placeholder, search
   );
 }
 
+function defaultProductColors() {
+  return [{ name: "Black", hex: "#111827" }];
+}
+
+function ColorInputs({ colors, onChange }) {
+  const rows = colors?.length ? colors : defaultProductColors();
+
+  function updateColor(index, patch) {
+    onChange(rows.map((color, currentIndex) => (currentIndex === index ? { ...color, ...patch } : color)));
+  }
+
+  function addColor() {
+    onChange([...rows, { name: "", hex: "#64748b" }]);
+  }
+
+  function removeColor(index) {
+    onChange(rows.length === 1 ? rows : rows.filter((_color, currentIndex) => currentIndex !== index));
+  }
+
+  return (
+    <div className="color-editor">
+      <div className="section-heading-row">
+        <div>
+          <h3>Product colors</h3>
+          <p className="hint">At least one color is required. Buyers will choose from these colors.</p>
+        </div>
+        <button type="button" className="button tiny secondary" onClick={addColor}>Add color</button>
+      </div>
+      <div className="color-editor-list">
+        {rows.map((color, index) => (
+          <div className="color-editor-row" key={`${color.hex}-${index}`}>
+            <label>Color name
+              <input placeholder="Example: Black" value={color.name || ""} onChange={(e) => updateColor(index, { name: e.target.value })} />
+            </label>
+            <label>Swatch
+              <input type="color" value={color.hex || "#64748b"} onChange={(e) => updateColor(index, { hex: e.target.value })} />
+            </label>
+            <span className="color-chip"><span className="color-swatch" style={{ backgroundColor: color.hex || "#64748b" }} /> {color.name || "Color name"}</span>
+            <button type="button" className="button tiny danger" disabled={rows.length === 1} onClick={() => removeColor(index)}>Remove</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SellerDashboard() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("overview");
-  const [productForm, setProductForm] = useState({ name: "", category: "Mobile", price: "", stock: "", description: "", emiAvailable: true });
+  const [productForm, setProductForm] = useState({
+    name: "",
+    category: "Mobile",
+    price: "",
+    stock: "",
+    description: "",
+    emiAvailable: true,
+    emiInterestRate: "12",
+    emiInterestType: "flat",
+    emiMinDownPayment: "0",
+    emiMaxTenureMonths: "12",
+    colors: defaultProductColors()
+  });
   const [productImages, setProductImages] = useState([]);
   const [loanForm, setLoanForm] = useState({ buyerId: "", productId: "", principal: "", downPayment: "0", interestRate: "12", interestType: "flat", tenureMonths: "6", lateFeeType: "daily", lateFeeValue: "20" });
   const [schedulePreview, setSchedulePreview] = useState(null);
@@ -65,6 +124,9 @@ export default function SellerDashboard() {
   const [kycRejectReason, setKycRejectReason] = useState("");
   const [loanDetailsModal, setLoanDetailsModal] = useState(null);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [editingProductImages, setEditingProductImages] = useState([]);
+  const [editingReplaceImages, setEditingReplaceImages] = useState(false);
+  const [editingStockAddition, setEditingStockAddition] = useState({ quantity: "", note: "" });
   const [stockAdjustment, setStockAdjustment] = useState({ productId: "", quantity: "", note: "" });
 
   const summary = useQuery({ queryKey: ["summary"], queryFn: async () => (await api.get("/reports/summary")).data });
@@ -96,11 +158,12 @@ export default function SellerDashboard() {
     return map;
   }, [applications.data]);
   const overviewChartData = [
-    { label: "Total sales", amount: summary.data?.totalSales || 0 },
+    { label: "Sales", amount: summary.data?.totalSales || 0 },
     { label: "Collection", amount: summary.data?.totalCollection || 0 },
-    { label: "Overdue", amount: summary.data?.totalOverdueAmount || 0 }
+    { label: "Due", amount: summary.data?.totalDue || summary.data?.dueAmount || 0 }
   ];
   const productImagePreviews = useMemo(() => productImages.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })), [productImages]);
+  const editingProductImagePreviews = useMemo(() => editingProductImages.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })), [editingProductImages]);
   const kycByBuyerId = useMemo(() => {
     const map = new Map();
     (pendingKyc.data || []).forEach((doc) => {
@@ -118,19 +181,24 @@ export default function SellerDashboard() {
       formData.append("stock", productForm.stock);
       formData.append("description", productForm.description);
       formData.append("emiAvailable", productForm.emiAvailable ? "true" : "false");
+      formData.append("emiInterestRate", productForm.emiInterestRate);
+      formData.append("emiInterestType", productForm.emiInterestType);
+      formData.append("emiMinDownPayment", productForm.emiMinDownPayment);
+      formData.append("emiMaxTenureMonths", productForm.emiMaxTenureMonths);
+      formData.append("colors", JSON.stringify(productForm.colors));
       productImages.slice(0, 5).forEach((file) => formData.append("images", file));
       return api.post("/products", formData);
     },
     onSuccess: () => {
-      setProductForm({ name: "", category: "Mobile", price: "", stock: "", description: "", emiAvailable: true });
+      setProductForm({ name: "", category: "Mobile", price: "", stock: "", description: "", emiAvailable: true, emiInterestRate: "12", emiInterestType: "flat", emiMinDownPayment: "0", emiMaxTenureMonths: "12", colors: defaultProductColors() });
       setProductImages([]);
       queryClient.invalidateQueries({ queryKey: ["seller-products"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
-      alert("Product added successfully.");
+      notifySuccess("Product added successfully.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to add product.");
+      notifyError(err, "Failed to add product.");
     }
   });
 
@@ -140,27 +208,70 @@ export default function SellerDashboard() {
       setLoanForm({ buyerId: "", productId: "", principal: "", downPayment: "0", interestRate: "12", interestType: "flat", tenureMonths: "6", lateFeeType: "daily", lateFeeValue: "20" });
       setSchedulePreview(null);
       refreshData();
-      alert("Offline loan created successfully.");
+      notifySuccess("Offline loan created successfully.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to create offline loan.");
+      notifyError(err, "Failed to create offline loan.");
     }
   });
 
   const updateProduct = useMutation({
-    mutationFn: async (payload) => api.patch(`/products/${payload._id}`, payload),
-    onSuccess: () => {
-      setEditingProduct(null);
-      refreshData();
-      alert("Product updated successfully.");
+    mutationFn: async (payload) => {
+      const imageFiles = payload.imageFiles || [];
+      const updateFields = {
+        name: payload.name,
+        sku: payload.sku,
+        category: payload.category,
+        price: payload.price,
+        lowStockThreshold: payload.lowStockThreshold,
+        status: payload.status,
+        description: payload.description,
+        emiAvailable: payload.emiAvailable,
+        emiInterestRate: payload.emiInterestRate,
+        emiInterestType: payload.emiInterestType,
+        emiMinDownPayment: payload.emiMinDownPayment,
+        emiMaxTenureMonths: payload.emiMaxTenureMonths,
+        colors: JSON.stringify(payload.colors || defaultProductColors()),
+        replaceImages: payload.replaceImages
+      };
+
+      let response;
+      if (imageFiles.length) {
+        const formData = new FormData();
+        Object.entries(updateFields).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) formData.append(key, value);
+        });
+        imageFiles.slice(0, 5).forEach((file) => formData.append("images", file));
+        response = await api.patch(`/products/${payload._id}`, formData, { headers: { "Content-Type": "multipart/form-data" } });
+      } else {
+        response = await api.patch(`/products/${payload._id}`, updateFields);
+      }
+
+      const stockQuantity = Number(payload.stockToAdd || 0);
+      if (stockQuantity > 0) {
+        await api.post("/inventory/adjust", {
+          productId: payload._id,
+          quantity: stockQuantity,
+          note: payload.stockNote || "Stock added from product edit"
+        });
+      }
+      return response;
     },
-    onError: (err) => alert(err.response?.data?.message || "Failed to update product.")
+    onSuccess: () => {
+      closeEditProduct();
+      refreshData();
+      notifySuccess("Product updated successfully.");
+    },
+    onError: (err) => notifyError(err, "Failed to update product.")
   });
 
   const archiveProduct = useMutation({
     mutationFn: async (productId) => api.delete(`/products/${productId}`),
-    onSuccess: () => refreshData(),
-    onError: (err) => alert(err.response?.data?.message || "Failed to archive product.")
+    onSuccess: () => {
+      refreshData();
+      notifySuccess("Product archived successfully.");
+    },
+    onError: (err) => notifyError(err, "Failed to archive product.")
   });
 
   const adjustStock = useMutation({
@@ -168,17 +279,20 @@ export default function SellerDashboard() {
     onSuccess: () => {
       setStockAdjustment({ productId: "", quantity: "", note: "" });
       refreshData();
-      alert("Stock adjusted successfully.");
+      notifySuccess("Stock adjusted successfully.");
     },
-    onError: (err) => alert(err.response?.data?.message || "Failed to adjust stock.")
+    onError: (err) => notifyError(err, "Failed to adjust stock.")
   });
 
   const previewSchedule = useMutation({
     mutationFn: async () => api.post("/loans/preview", buildLoanPayload()),
-    onSuccess: ({ data }) => setSchedulePreview(data),
+    onSuccess: ({ data }) => {
+      setSchedulePreview(data);
+      notifyInfo("EMI schedule preview generated.");
+    },
     onError: (err) => {
       setSchedulePreview(null);
-      alert(err.response?.data?.message || "Failed to preview EMI schedule.");
+      notifyError(err, "Failed to preview EMI schedule.");
     }
   });
 
@@ -187,10 +301,10 @@ export default function SellerDashboard() {
     onSuccess: () => {
       setPaymentForm({ loanId: "", amount: "", method: "cash", allocationMode: "next_due", notes: "" });
       refreshData();
-      alert("Payment recorded successfully.");
+      notifySuccess("Payment recorded successfully.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to record payment.");
+      notifyError(err, "Failed to record payment.");
     }
   });
 
@@ -198,10 +312,10 @@ export default function SellerDashboard() {
     mutationFn: async (kycId) => api.patch(`/kyc/${kycId}/review-seller`, { status: "approved" }),
     onSuccess: () => {
       refreshData();
-      alert("KYC approved successfully.");
+      notifySuccess("KYC approved successfully.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to approve KYC.");
+      notifyError(err, "Failed to approve KYC.");
     }
   });
 
@@ -210,10 +324,10 @@ export default function SellerDashboard() {
     onSuccess: () => {
       setKycRejectReason("");
       refreshData();
-      alert("KYC rejected successfully.");
+      notifySuccess("KYC rejected successfully.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to reject KYC.");
+      notifyError(err, "Failed to reject KYC.");
     }
   });
 
@@ -221,10 +335,10 @@ export default function SellerDashboard() {
     mutationFn: async (loanId) => api.patch(`/loans/${loanId}/approve`),
     onSuccess: () => {
       refreshData();
-      alert("Online EMI request approved and EMI schedule generated.");
+      notifySuccess("Online EMI request approved and EMI schedule generated.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to approve EMI request.");
+      notifyError(err, "Failed to approve EMI request.");
     }
   });
 
@@ -232,10 +346,10 @@ export default function SellerDashboard() {
     mutationFn: async ({ loanId, reason }) => api.patch(`/loans/${loanId}/reject`, { reason }),
     onSuccess: () => {
       refreshData();
-      alert("Online EMI request rejected.");
+      notifySuccess("Online EMI request rejected.");
     },
     onError: (err) => {
-      alert(err.response?.data?.message || "Failed to reject EMI request.");
+      notifyError(err, "Failed to reject EMI request.");
     }
   });
 
@@ -244,9 +358,9 @@ export default function SellerDashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["seller-orders"] });
       queryClient.invalidateQueries({ queryKey: ["report-orders"] });
-      alert("Order status updated.");
+      notifySuccess("Order status updated.");
     },
-    onError: (err) => alert(err.response?.data?.message || "Failed to update order.")
+    onError: (err) => notifyError(err, "Failed to update order.")
   });
 
   async function refreshData() {
@@ -288,8 +402,27 @@ export default function SellerDashboard() {
     setSchedulePreview(null);
   }
 
+  function openEditProduct(product) {
+    setEditingProduct({ ...product, colors: product.colors?.length ? product.colors : defaultProductColors() });
+    setEditingProductImages([]);
+    setEditingReplaceImages(false);
+    setEditingStockAddition({ quantity: "", note: "" });
+  }
+
+  function closeEditProduct() {
+    setEditingProduct(null);
+    setEditingProductImages([]);
+    setEditingReplaceImages(false);
+    setEditingStockAddition({ quantity: "", note: "" });
+  }
+
   function formatBDT(value) {
     return `BDT ${Math.round(Number(value || 0)).toLocaleString("en-BD")}`;
+  }
+
+  function buyerProfilePath(buyer) {
+    const id = buyer?._id || buyer;
+    return id ? `/buyers/${id}` : "";
   }
 
   return (
@@ -335,15 +468,16 @@ export default function SellerDashboard() {
               <div className="stats-grid">
                 <StatCard label="Total sales" value={formatBDT(summary.data?.totalSales)} tone="green" />
                 <StatCard label="Total collection" value={formatBDT(summary.data?.totalCollection)} tone="purple" />
-                <StatCard label="Total overdue" value={formatBDT(summary.data?.totalOverdueAmount)} tone="red" />
-                <StatCard label="Active EMI loans" value={activeLoans.length} tone="green" />
-                <StatCard label="Pending requests" value={requestedCount} />
-                <StatCard label="Overdue cases" value={overdue.data?.length ?? 0} tone="red" />
-                <StatCard label="Collected this month" value={formatBDT(summary.data?.monthlyCollection)} tone="purple" />
+                <StatCard label="Total due" value={formatBDT(summary.data?.totalDue)} tone="red" />
+                <StatCard label="Cash sales" value={formatBDT(summary.data?.cashSales)} tone="green" />
+                <StatCard label="EMI sales" value={formatBDT(summary.data?.emiSales)} tone="purple" />
+                <StatCard label="Overdue amount" value={formatBDT(summary.data?.overdueAmount ?? summary.data?.totalOverdueAmount)} tone="red" />
+                <StatCard label="Paid orders" value={summary.data?.paidOrderCount ?? 0} />
+                <StatCard label="Unpaid orders" value={summary.data?.unpaidOrderCount ?? 0} tone="red" />
               </div>
 
               <section className="panel">
-                <h2><BarChart3 size={18} /> Sales, collection, and overdue</h2>
+                <h2><BarChart3 size={18} /> Sales, collection, and due</h2>
                 <div className="chart-box">
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={overviewChartData}>
@@ -355,6 +489,30 @@ export default function SellerDashboard() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+              </section>
+
+              <section className="panel">
+                <h2>Business snapshot</h2>
+                <div className="stats-grid">
+                  <StatCard label="Cash collection" value={formatBDT(summary.data?.cashCollection)} tone="green" />
+                  <StatCard label="EMI collection" value={formatBDT(summary.data?.emiCollection)} tone="purple" />
+                  <StatCard label="Cash due" value={formatBDT(summary.data?.cashDue)} tone="red" />
+                  <StatCard label="EMI due" value={formatBDT(summary.data?.emiDue ?? summary.data?.dueAmount)} tone="red" />
+                  <StatCard label="Active loans" value={summary.data?.activeLoanCount ?? activeLoans.length} tone="green" />
+                  <StatCard label="Pending EMI requests" value={summary.data?.requestedLoansCount ?? requestedCount} />
+                  <StatCard label="Overdue cases" value={summary.data?.overdueCount ?? overdue.data?.length ?? 0} tone="red" />
+                  <StatCard label="Low-stock products" value={(summary.data?.lowStockProducts || []).length} />
+                </div>
+                {(summary.data?.lowStockProducts || []).length > 0 && (
+                  <div className="list-stack">
+                    {(summary.data?.lowStockProducts || []).slice(0, 5).map((product) => (
+                      <div className="list-row" key={product._id}>
+                        <div><strong>{product.name}</strong><span>Stock {product.stock} | Alert at {product.lowStockThreshold}</span></div>
+                        <span className="badge overdue">Low stock</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
 
               <section className="panel">
@@ -380,7 +538,13 @@ export default function SellerDashboard() {
                         (overdue.data || []).map((row) => (
                           <tr key={row._id}>
                             <td>
-                              <strong>{row.buyerId?.name || "Buyer"}</strong><br />
+                              <strong>
+                                {buyerProfilePath(row.buyerId) ? (
+                                  <Link className="inline-profile-link" to={buyerProfilePath(row.buyerId)}>{row.buyerId?.name || "Buyer"}</Link>
+                                ) : (
+                                  row.buyerId?.name || "Buyer"
+                                )}
+                              </strong><br />
                               <span style={{ fontSize: "0.85rem", color: "#697b77" }}>{row.buyerId?.phone || row.buyerId?.email}</span>
                             </td>
                             <td>
@@ -437,7 +601,13 @@ export default function SellerDashboard() {
                         return (
                           <tr key={loan._id}>
                             <td>
-                              <strong>{loan.buyerId?.name || "Buyer"}</strong><br />
+                              <strong>
+                                {buyerProfilePath(loan.buyerId) ? (
+                                  <Link className="inline-profile-link" to={buyerProfilePath(loan.buyerId)}>{loan.buyerId?.name || "Buyer"}</Link>
+                                ) : (
+                                  loan.buyerId?.name || "Buyer"
+                                )}
+                              </strong><br />
                               <span style={{ fontSize: "0.85rem", color: "#697b77" }}>{loan.buyerId?.phone || loan.buyerId?.email}</span>
                             </td>
                             <td>{loan.productId?.name || "Marketplace product"}</td>
@@ -453,6 +623,7 @@ export default function SellerDashboard() {
                               )}
                             </td>
                             <td className="table-action-cell">
+                              {buyerProfilePath(loan.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(loan.buyerId)}>Buyer</Link>}
                               <button
                                 className="button tiny"
                                 onClick={() => approveOnlineRequest.mutate(loan._id)}
@@ -650,6 +821,28 @@ export default function SellerDashboard() {
               <label>Product description
                 <textarea placeholder="Short description shown in marketplace" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} />
               </label>
+              <ColorInputs colors={productForm.colors} onChange={(colors) => setProductForm({ ...productForm, colors })} />
+              <section className="sub-panel">
+                <h3>Seller EMI terms</h3>
+                <div className="form-grid compact">
+                  <label>Fixed interest rate (%)
+                    <input type="number" min="0" max="100" placeholder="Example: 12" value={productForm.emiInterestRate} onChange={(e) => setProductForm({ ...productForm, emiInterestRate: e.target.value })} />
+                  </label>
+                  <label>Interest type
+                    <select value={productForm.emiInterestType} onChange={(e) => setProductForm({ ...productForm, emiInterestType: e.target.value })}>
+                      <option value="flat">Flat</option>
+                      <option value="reducing">Reducing balance</option>
+                      <option value="zero">Zero interest</option>
+                    </select>
+                  </label>
+                  <label>Minimum down payment (BDT)
+                    <input type="number" min="0" placeholder="Example: 4000" value={productForm.emiMinDownPayment} onChange={(e) => setProductForm({ ...productForm, emiMinDownPayment: e.target.value })} />
+                  </label>
+                  <label>Maximum tenure (months)
+                    <input type="number" min="3" max="60" placeholder="Example: 12" value={productForm.emiMaxTenureMonths} onChange={(e) => setProductForm({ ...productForm, emiMaxTenureMonths: e.target.value })} />
+                  </label>
+                </div>
+              </section>
               <label className="file-label">
                 Upload images <span className="hint">(optional)</span>
                 <input type="file" accept="image/*" multiple onChange={(e) => setProductImages(Array.from(e.target.files || []).slice(0, 5))}/>
@@ -665,7 +858,7 @@ export default function SellerDashboard() {
                 </div>
               )}
               <label className="inline-check"><input type="checkbox" checked={productForm.emiAvailable} onChange={(e) => setProductForm({ ...productForm, emiAvailable: e.target.checked })} /> EMI available</label>
-              <button className="button" onClick={() => createProduct.mutate()} disabled={!productForm.name || !productForm.price || !productForm.stock}>Save product</button>
+              <button className="button" onClick={() => createProduct.mutate()} disabled={!productForm.name || !productForm.price || !productForm.stock || !productForm.colors?.every((color) => color.name)}>Save product</button>
             </section>
           )}
 
@@ -714,9 +907,9 @@ export default function SellerDashboard() {
                           <td>BDT {product.price}</td>
                           <td>{product.stock} {product.stock <= product.lowStockThreshold && <span className="badge overdue">Low</span>}</td>
                           <td><StatusBadge status={product.status} /></td>
-                          <td>{product.emiAvailable ? "Yes" : "No"}</td>
+                          <td>{product.emiAvailable ? `${product.emiInterestRate || 0}% / max ${product.emiMaxTenureMonths || 0}m` : "No"}</td>
                           <td className="table-action-cell">
-                            <button className="button tiny" onClick={() => setEditingProduct({ ...product })}>Edit</button>
+                            <button className="button tiny" onClick={() => openEditProduct(product)}>Edit</button>
                             <button className="button tiny ghost" onClick={() => updateProduct.mutate({ ...product, status: product.status === "active" ? "inactive" : "active" })}>{product.status === "active" ? "Deactivate" : "Activate"}</button>
                             <button className="button tiny danger" onClick={() => archiveProduct.mutate(product._id)}>Archive</button>
                           </td>
@@ -747,7 +940,13 @@ export default function SellerDashboard() {
                       (orders.data || []).map((order) => (
                         <tr key={order._id}>
                           <td><Link to={`/orders/${order._id}`}>{order.orderNo}</Link></td>
-                          <td>{order.buyerId?.name || "-"}</td>
+                          <td>
+                            {buyerProfilePath(order.buyerId) ? (
+                              <Link className="inline-profile-link" to={buyerProfilePath(order.buyerId)}>{order.buyerId?.name || "Buyer"}</Link>
+                            ) : (
+                              order.buyerId?.name || "-"
+                            )}
+                          </td>
                           <td>{formatBDT(order.total)}</td>
                           <td><StatusBadge status={order.paymentStatus} /></td>
                           <td><StatusBadge status={order.fulfillmentStatus} /></td>
@@ -755,6 +954,7 @@ export default function SellerDashboard() {
                           <td>{(order.items || []).some((item) => item.loanId) ? "Yes" : "No"}</td>
                           <td className="table-action-cell">
                             <Link className="button tiny" to={`/orders/${order._id}`}>Details</Link>
+                            {buyerProfilePath(order.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(order.buyerId)}>Buyer</Link>}
                             <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "confirmed" })}>Confirm</button>
                             <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "shipped" })}>Ship</button>
                             <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "delivered" })}>Deliver</button>
@@ -786,10 +986,19 @@ export default function SellerDashboard() {
                     ) : (
                       activeLoans.map((loan) => (
                         <tr key={loan._id}>
-                          <td>{loan.buyerId?.name}</td>
+                          <td>
+                            {buyerProfilePath(loan.buyerId) ? (
+                              <Link className="inline-profile-link" to={buyerProfilePath(loan.buyerId)}>{loan.buyerId?.name || "Buyer"}</Link>
+                            ) : (
+                              loan.buyerId?.name
+                            )}
+                          </td>
                           <td>BDT {loan.totalPayable}</td>
                           <td><StatusBadge status={loan.status} /></td>
-                          <td><button className="button tiny" onClick={() => setLoanDetailsModal(loan)}><Eye size={14} /> View</button></td>
+                          <td className="table-action-cell">
+                            <button className="button tiny" onClick={() => setLoanDetailsModal(loan)}><Eye size={14} /> View</button>
+                            {buyerProfilePath(loan.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(loan.buyerId)}>Buyer</Link>}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -827,7 +1036,14 @@ export default function SellerDashboard() {
                     ) : (
                       (pendingKyc.data || []).map((doc) => (
                         <tr key={doc._id}>
-                          <td>{doc.userId?.name}<br /><span style={{ fontSize: "0.85rem", color: "#888" }}>{doc.userId?.email}</span></td>
+                          <td>
+                            {buyerProfilePath(doc.userId) ? (
+                              <Link className="inline-profile-link" to={buyerProfilePath(doc.userId)}>{doc.userId?.name || "Buyer"}</Link>
+                            ) : (
+                              doc.userId?.name
+                            )}
+                            <br /><span style={{ fontSize: "0.85rem", color: "#888" }}>{doc.userId?.email}</span>
+                          </td>
                           <td>{doc.type.toUpperCase()}</td>
                           <td>
                             {(doc.files || []).map((file) => (
@@ -840,6 +1056,7 @@ export default function SellerDashboard() {
                             )}
                           </td>
                           <td className="table-action-cell">
+                            {buyerProfilePath(doc.userId) && <Link className="button tiny secondary" to={buyerProfilePath(doc.userId)}>Buyer</Link>}
                             <button className="button tiny" onClick={() => approveKyc.mutate(doc._id)}>Approve</button>
                             <button
                               className="button tiny danger"
@@ -866,18 +1083,28 @@ export default function SellerDashboard() {
 
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Receipt</th><th>Buyer</th><th>Amount</th><th>Date</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Receipt</th><th>Buyer</th><th>Reference</th><th>Amount</th><th>Date</th><th>Action</th></tr></thead>
                   <tbody>
                     {(payments.data || []).length === 0 ? (
-                      <tr><td colSpan="5" style={{ textAlign: "center", color: "#888" }}>No payment history found</td></tr>
+                      <tr><td colSpan="6" style={{ textAlign: "center", color: "#888" }}>No payment history found</td></tr>
                     ) : (
                       (payments.data || []).map((payment) => (
                         <tr key={payment._id}>
                           <td>{payment.receiptNo || "—"}</td>
-                          <td>{payment.buyerId?.name || payment.buyerId?.email}</td>
+                          <td>
+                            {buyerProfilePath(payment.buyerId) ? (
+                              <Link className="inline-profile-link" to={buyerProfilePath(payment.buyerId)}>{payment.buyerId?.name || payment.buyerId?.email || "Buyer"}</Link>
+                            ) : (
+                              payment.buyerId?.name || payment.buyerId?.email
+                            )}
+                          </td>
+                          <td>{payment.loanId?._id || payment.loanId || payment.orderId?.orderNo || payment.orderId || "—"}</td>
                           <td>BDT {payment.amount}</td>
                           <td>{dayjs(payment.paymentDate).format("DD MMM YYYY")}</td>
-                          <td><button className="button tiny" onClick={() => generateReceiptPdf(payment)}>Download</button></td>
+                          <td className="table-action-cell">
+                            <button className="button tiny" onClick={() => generateReceiptPdf(payment)}>Download</button>
+                            {buyerProfilePath(payment.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(payment.buyerId)}>Buyer</Link>}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -921,8 +1148,8 @@ export default function SellerDashboard() {
                   <h3>Sales by product/category</h3>
                   <div className="table-wrap">
                     <table>
-                      <thead><tr><th>Product</th><th>Category</th><th>Principal</th><th>Total</th><th>Status</th></tr></thead>
-                      <tbody>{(salesReport.data?.rows || []).slice(0, 10).map((row, index) => <tr key={`${row.product}-${index}`}><td>{row.product}</td><td>{row.category}</td><td>{formatBDT(row.principal)}</td><td>{formatBDT(row.totalPayable)}</td><td>{row.status}</td></tr>)}</tbody>
+                      <thead><tr><th>Type</th><th>Product</th><th>Category</th><th>Principal</th><th>Total</th><th>Status</th></tr></thead>
+                      <tbody>{(salesReport.data?.rows || []).slice(0, 10).map((row, index) => <tr key={`${row.saleType || "sale"}-${row.product}-${index}`}><td>{row.saleType || "EMI"}</td><td>{row.product}</td><td>{row.category}</td><td>{formatBDT(row.principal)}</td><td>{formatBDT(row.totalPayable)}</td><td>{row.status}</td></tr>)}</tbody>
                     </table>
                   </div>
                 </section>
@@ -937,7 +1164,14 @@ export default function SellerDashboard() {
           <form className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Loan details</h2>
             <div className="panel">
-              <p><strong>Buyer:</strong> {loanDetailsModal.buyerId?.name}</p>
+              <p>
+                <strong>Buyer:</strong>{" "}
+                {buyerProfilePath(loanDetailsModal.buyerId) ? (
+                  <Link className="inline-profile-link" to={buyerProfilePath(loanDetailsModal.buyerId)}>{loanDetailsModal.buyerId?.name}</Link>
+                ) : (
+                  loanDetailsModal.buyerId?.name
+                )}
+              </p>
               <p><strong>Product:</strong> {loanDetailsModal.productId?.name || "Offline"}</p>
               <p><strong>Principal:</strong> BDT {loanDetailsModal.principal}</p>
               <p><strong>Total payable:</strong> BDT {loanDetailsModal.totalPayable}</p>
@@ -949,8 +1183,21 @@ export default function SellerDashboard() {
       )}
 
       {editingProduct && (
-        <div className="modal-backdrop" onClick={() => setEditingProduct(null)}>
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); updateProduct.mutate(editingProduct); }}>
+        <div className="modal-backdrop" onClick={closeEditProduct}>
+          <form
+            className="modal product-edit-modal"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              updateProduct.mutate({
+                ...editingProduct,
+                imageFiles: editingProductImages,
+                replaceImages: editingReplaceImages,
+                stockToAdd: editingStockAddition.quantity,
+                stockNote: editingStockAddition.note
+              });
+            }}
+          >
             <h2>Edit product</h2>
             <div className="form-grid compact">
               <label>Product name
@@ -968,6 +1215,15 @@ export default function SellerDashboard() {
               <label>Low stock alert
                 <input type="number" value={editingProduct.lowStockThreshold ?? 3} onChange={(e) => setEditingProduct({ ...editingProduct, lowStockThreshold: Number(e.target.value) })} />
               </label>
+              <label>Current stock
+                <input type="number" value={editingProduct.stock ?? 0} disabled />
+              </label>
+              <label>Add new stock
+                <input type="number" min="0" placeholder="Example: 10" value={editingStockAddition.quantity} onChange={(e) => setEditingStockAddition({ ...editingStockAddition, quantity: e.target.value })} />
+              </label>
+              <label>Stock note
+                <input placeholder="Example: Supplier restock" value={editingStockAddition.note} onChange={(e) => setEditingStockAddition({ ...editingStockAddition, note: e.target.value })} />
+              </label>
               <label>Status
                 <select value={editingProduct.status || "active"} onChange={(e) => setEditingProduct({ ...editingProduct, status: e.target.value })}>
                   <option value="active">Active</option>
@@ -978,10 +1234,60 @@ export default function SellerDashboard() {
             <label>Description
               <textarea value={editingProduct.description || ""} onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })} />
             </label>
+            <ColorInputs colors={editingProduct.colors} onChange={(colors) => setEditingProduct({ ...editingProduct, colors })} />
+            <section className="sub-panel">
+              <h3>Seller EMI terms</h3>
+              <div className="form-grid compact">
+                <label>Fixed interest rate (%)
+                  <input type="number" min="0" max="100" value={editingProduct.emiInterestRate ?? 12} onChange={(e) => setEditingProduct({ ...editingProduct, emiInterestRate: Number(e.target.value) })} />
+                </label>
+                <label>Interest type
+                  <select value={editingProduct.emiInterestType || "flat"} onChange={(e) => setEditingProduct({ ...editingProduct, emiInterestType: e.target.value })}>
+                    <option value="flat">Flat</option>
+                    <option value="reducing">Reducing balance</option>
+                    <option value="zero">Zero interest</option>
+                  </select>
+                </label>
+                <label>Minimum down payment (BDT)
+                  <input type="number" min="0" value={editingProduct.emiMinDownPayment ?? 0} onChange={(e) => setEditingProduct({ ...editingProduct, emiMinDownPayment: Number(e.target.value) })} />
+                </label>
+                <label>Maximum tenure (months)
+                  <input type="number" min="3" max="60" value={editingProduct.emiMaxTenureMonths ?? 12} onChange={(e) => setEditingProduct({ ...editingProduct, emiMaxTenureMonths: Number(e.target.value) })} />
+                </label>
+              </div>
+            </section>
+            {(editingProduct.images || []).length > 0 && (
+              <div className="image-preview-row">
+                {(editingProduct.images || []).map((image) => (
+                  <div className="image-preview" key={image.path || image.publicId}>
+                    <img src={image.path} alt={editingProduct.name} />
+                    <span>Current image</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="file-label">
+              Upload product images
+              <input type="file" accept="image/*" multiple onChange={(e) => setEditingProductImages(Array.from(e.target.files || []).slice(0, 5))} />
+            </label>
+            {editingProductImagePreviews.length > 0 && (
+              <div className="image-preview-row">
+                {editingProductImagePreviews.map((image) => (
+                  <div className="image-preview" key={image.url}>
+                    <img src={image.url} alt={image.name} />
+                    <span>{image.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="inline-check">
+              <input type="checkbox" checked={editingReplaceImages} onChange={(e) => setEditingReplaceImages(e.target.checked)} />
+              Replace current images
+            </label>
             <label className="inline-check"><input type="checkbox" checked={Boolean(editingProduct.emiAvailable)} onChange={(e) => setEditingProduct({ ...editingProduct, emiAvailable: e.target.checked })} /> EMI available</label>
             <div className="button-row">
               <button className="button" disabled={updateProduct.isPending}>Save changes</button>
-              <button type="button" className="button secondary" onClick={() => setEditingProduct(null)}>Cancel</button>
+              <button type="button" className="button secondary" onClick={closeEditProduct}>Cancel</button>
             </div>
           </form>
         </div>

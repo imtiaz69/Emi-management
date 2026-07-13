@@ -8,7 +8,9 @@ function buildReceiptPayload(transaction) {
     paymentDate: transaction.paymentDate,
     buyer: transaction.buyerId,
     seller: transaction.sellerId,
-    loanId: transaction.loanId?._id || transaction.loanId
+    loanId: transaction.loanId?._id || transaction.loanId,
+    orderId: transaction.orderId?._id || transaction.orderId,
+    orderNo: transaction.orderId?.orderNo
   };
 }
 

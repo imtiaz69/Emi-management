@@ -16,7 +16,10 @@ export function generateReceiptPdf(transaction) {
   y += lineHeight;
   pdf.text(`Payment date: ${new Date(transaction.paymentDate).toLocaleString()}`, labelX, y);
   y += lineHeight;
-  pdf.text(`Loan ID: ${transaction.loanId?._id || transaction.loanId || "N/A"}`, labelX, y);
+  const paymentReference = transaction.loanId
+    ? `Loan ID: ${transaction.loanId?._id || transaction.loanId}`
+    : `Order: ${transaction.orderId?.orderNo || transaction.orderId || "N/A"}`;
+  pdf.text(paymentReference, labelX, y);
   y += lineHeight;
   pdf.text(`Buyer: ${transaction.buyerId?.name || transaction.buyerId?.email || "N/A"}`, labelX, y);
   y += lineHeight;

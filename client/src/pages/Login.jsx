@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/http";
 import { useAuth } from "../context/AuthContext.jsx";
+import { notifyError, notifyInfo, notifySuccess } from "../utils/toast.js";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -17,17 +18,26 @@ export default function Login() {
     setError("");
     try {
       const { user } = await login(form.email, form.password);
+      notifySuccess(`Welcome back, ${user.name || user.role}.`);
       navigate(user.role === "admin" ? "/admin" : user.role === "seller" ? "/seller" : "/buyer");
     } catch (err) {
-      setError(err.response?.data?.message || "Login failed");
+      const message = err.response?.data?.message || "Login failed";
+      setError(message);
+      notifyError(err, "Login failed");
     }
   }
 
   async function requestReset() {
     setError("");
-    const { data } = await api.post("/auth/forgot-password", { email: resetForm.email || form.email });
-    setResetForm({ ...resetForm, email: resetForm.email || form.email, otp: data.mockOtp || "" });
-    setMessage(`${data.message} Demo OTP: ${data.mockOtp}`);
+    try {
+      const { data } = await api.post("/auth/forgot-password", { email: resetForm.email || form.email });
+      setResetForm({ ...resetForm, email: resetForm.email || form.email, otp: data.mockOtp || "" });
+      setMessage(`${data.message} Demo OTP: ${data.mockOtp}`);
+      notifyInfo("Password reset OTP generated.");
+    } catch (err) {
+      setError(err.response?.data?.message || "Unable to request OTP");
+      notifyError(err, "Unable to request OTP");
+    }
   }
 
   async function resetPassword() {
@@ -38,8 +48,10 @@ export default function Login() {
       setMessage("Password reset successfully. You can log in now.");
       setShowReset(false);
       setForm({ email: resetForm.email, password: resetForm.password });
+      notifySuccess("Password reset successfully.");
     } catch (err) {
       setError(err.response?.data?.message || "Password reset failed");
+      notifyError(err, "Password reset failed");
     }
   }
 

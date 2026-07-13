@@ -5,8 +5,8 @@ const multer = require("multer");
 const policies = {
   products: {
     maxFiles: 5,
-    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
-    allowedExtensions: [".jpg", ".jpeg", ".png", ".webp"]
+    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/avif"],
+    allowedExtensions: [".jpg", ".jpeg", ".png", ".webp", ".avif"]
   },
   kyc: {
     maxFiles: 4,
@@ -49,14 +49,16 @@ async function assertUploadedFilesSafe(files = []) {
 async function assertFileSignatureSafe(file) {
   const fd = await fs.promises.open(file.path, "r");
   try {
-    const buffer = Buffer.alloc(8);
-    await fd.read(buffer, 0, 8, 0);
+    const buffer = Buffer.alloc(12);
+    await fd.read(buffer, 0, 12, 0);
     const ext = path.extname(file.originalname).toLowerCase();
     const isPng = buffer.slice(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const isJpg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
     const isPdf = buffer.slice(0, 4).toString() === "%PDF";
     const isWebp = buffer.slice(0, 4).toString() === "RIFF";
-    const valid = ([".jpg", ".jpeg"].includes(ext) && isJpg) || (ext === ".png" && isPng) || (ext === ".pdf" && isPdf) || (ext === ".webp" && isWebp);
+    const fileTypeBox = buffer.slice(4, 12).toString();
+    const isAvif = fileTypeBox.startsWith("ftyp") && fileTypeBox.includes("avif");
+    const valid = ([".jpg", ".jpeg"].includes(ext) && isJpg) || (ext === ".png" && isPng) || (ext === ".pdf" && isPdf) || (ext === ".webp" && isWebp) || (ext === ".avif" && isAvif);
     if (!valid) {
       await fs.promises.unlink(file.path).catch(() => {});
       const error = new Error(`File signature does not match extension for ${file.originalname}`);

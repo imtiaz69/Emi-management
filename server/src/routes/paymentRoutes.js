@@ -8,13 +8,14 @@ const { recordPayment } = require("../services/loanService");
 const { createMockGatewayReference } = require("../services/paymentService");
 
 const router = express.Router();
-const allocationModeSchema = z.enum(["next_due", "overdue", "advance", "custom"]).optional().default("advance");
+const allocationModeSchema = z.enum(["next_due", "next_n", "overdue", "advance", "custom"]).optional().default("advance");
 const manualPaymentSchema = z.object({
   loanId: objectId,
   scheduleId: optionalObjectId,
   amount: z.coerce.number().min(1),
   method: z.enum(["cash", "bank", "cheque", "bkash", "nagad", "sslcommerz"]),
   allocationMode: allocationModeSchema,
+  installmentCount: z.coerce.number().int().min(1).max(60).optional(),
   paymentDate: z.coerce.date().optional(),
   gatewayRef: z.string().trim().max(120).optional(),
   notes: z.string().trim().max(500).optional().default("")
@@ -24,6 +25,7 @@ const mockPaymentSchema = z.object({
   scheduleId: optionalObjectId,
   amount: z.coerce.number().min(1),
   allocationMode: allocationModeSchema,
+  installmentCount: z.coerce.number().int().min(1).max(60).optional(),
   method: z.enum(["mock_gateway"]).optional(),
   notes: z.string().trim().max(500).optional().default("")
 });
@@ -66,6 +68,7 @@ router.get(
     if (req.user.role === "buyer") filter.buyerId = req.user._id;
     const transactions = await Transaction.find(filter)
       .populate("loanId")
+      .populate("orderId", "orderNo total paymentMode")
       .populate("buyerId", "name email phone")
       .populate("sellerId", "name email phone")
       .sort({ paymentDate: -1 })

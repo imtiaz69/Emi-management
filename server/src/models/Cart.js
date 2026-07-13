@@ -6,7 +6,9 @@ const cartItemSchema = new mongoose.Schema(
     sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true, min: 0 },
-    selectedFinanceMode: { type: String, enum: ["cash", "emi"], default: "cash" }
+    selectedFinanceMode: { type: String, enum: ["cash", "emi"], default: "cash" },
+    selectedColorName: { type: String, trim: true },
+    selectedColorHex: { type: String, trim: true }
   },
   { timestamps: true }
 );

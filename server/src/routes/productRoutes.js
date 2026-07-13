@@ -10,6 +10,11 @@ const { writeAudit } = require("../services/auditService");
 
 const router = express.Router();
 const upload = createUploader("products");
+const colorSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  hex: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, "Color must be a hex value like #22c55e").default("#64748b")
+});
+const colorsSchema = z.preprocess(parseColorsInput, z.array(colorSchema).min(1, "At least one product color is required").max(12, "Maximum 12 colors allowed"));
 const productCreateSchema = z.object({
   name: z.string().trim().min(2).max(160),
   sku: z.string().trim().max(80).optional().default(""),
@@ -22,6 +27,11 @@ const productCreateSchema = z.object({
   stock: z.coerce.number().int().min(0),
   lowStockThreshold: z.coerce.number().int().min(0).optional(),
   emiAvailable: formBoolean.optional().default(true),
+  emiInterestRate: z.coerce.number().min(0).max(100).optional().default(12),
+  emiInterestType: z.enum(["flat", "reducing", "zero"]).optional().default("flat"),
+  emiMinDownPayment: z.coerce.number().min(0).optional().default(0),
+  emiMaxTenureMonths: z.coerce.number().int().min(3).max(60).optional().default(12),
+  colors: colorsSchema,
   featured: formBoolean.optional().default(false)
 });
 const productUpdateSchema = z.object({
@@ -37,6 +47,11 @@ const productUpdateSchema = z.object({
   stock: z.coerce.number().int().min(0).optional(),
   lowStockThreshold: z.coerce.number().int().min(0).optional(),
   emiAvailable: formBoolean.optional(),
+  emiInterestRate: z.coerce.number().min(0).max(100).optional(),
+  emiInterestType: z.enum(["flat", "reducing", "zero"]).optional(),
+  emiMinDownPayment: z.coerce.number().min(0).optional(),
+  emiMaxTenureMonths: z.coerce.number().int().min(3).max(60).optional(),
+  colors: colorsSchema.optional(),
   featured: formBoolean.optional(),
   replaceImages: formBoolean.optional().default(false)
 });
@@ -110,6 +125,9 @@ router.post(
   validateBody(productCreateSchema),
   asyncHandler(async (req, res) => {
     await assertUploadedFilesSafe(req.files || []);
+    if (req.body.emiAvailable && Number(req.body.emiMinDownPayment || 0) >= Number(req.body.price)) {
+      return res.status(400).json({ message: "Minimum down payment must be lower than product price" });
+    }
     const productImages = await Promise.all((req.files || []).map((file) => uploadAndBuild(file, `products/${req.user._id}`)));
     const product = await Product.create({
       sellerId: req.user._id,
@@ -125,6 +143,11 @@ router.post(
       stock: req.body.stock,
       lowStockThreshold: req.body.lowStockThreshold,
       emiAvailable: req.body.emiAvailable,
+      emiInterestRate: req.body.emiInterestRate,
+      emiInterestType: req.body.emiInterestType,
+      emiMinDownPayment: req.body.emiMinDownPayment,
+      emiMaxTenureMonths: req.body.emiMaxTenureMonths,
+      colors: req.body.colors,
       featured: req.body.featured,
       images: productImages
     });
@@ -144,6 +167,12 @@ router.patch(
     await assertUploadedFilesSafe(req.files || []);
     const product = await Product.findOne({ _id: req.params.id, sellerId: req.user._id });
     if (!product) return res.status(404).json({ message: "Product not found" });
+    const nextPrice = req.body.price !== undefined ? Number(req.body.price) : Number(product.price);
+    const nextMinDownPayment = req.body.emiMinDownPayment !== undefined ? Number(req.body.emiMinDownPayment) : Number(product.emiMinDownPayment || 0);
+    const nextEmiAvailable = req.body.emiAvailable !== undefined ? req.body.emiAvailable : product.emiAvailable;
+    if (nextEmiAvailable && nextMinDownPayment >= nextPrice) {
+      return res.status(400).json({ message: "Minimum down payment must be lower than product price" });
+    }
     ["name", "sku", "brand", "warranty", "description", "category", "status"].forEach((key) => {
       if (req.body[key] !== undefined) product[key] = req.body[key];
     });
@@ -153,6 +182,11 @@ router.patch(
     if (req.body.stock !== undefined) product.stock = req.body.stock;
     if (req.body.lowStockThreshold !== undefined) product.lowStockThreshold = req.body.lowStockThreshold;
     if (req.body.emiAvailable !== undefined) product.emiAvailable = req.body.emiAvailable;
+    if (req.body.emiInterestRate !== undefined) product.emiInterestRate = req.body.emiInterestRate;
+    if (req.body.emiInterestType !== undefined) product.emiInterestType = req.body.emiInterestType;
+    if (req.body.emiMinDownPayment !== undefined) product.emiMinDownPayment = req.body.emiMinDownPayment;
+    if (req.body.emiMaxTenureMonths !== undefined) product.emiMaxTenureMonths = req.body.emiMaxTenureMonths;
+    if (req.body.colors !== undefined) product.colors = req.body.colors;
     if (req.body.featured !== undefined) product.featured = req.body.featured;
     if (req.files?.length) {
       const nextImages = await Promise.all(req.files.map((file) => uploadAndBuild(file, `products/${req.user._id}`)));
@@ -203,6 +237,24 @@ function buildSlug(name) {
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function parseColorsInput(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // Fall through to comma parsing for simple form inputs.
+  }
+  return text
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map((name) => ({ name, hex: "#64748b" }));
 }
 
 module.exports = router;

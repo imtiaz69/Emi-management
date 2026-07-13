@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { api, openProtectedFile } from "../api/http";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
+import { notifyError, notifySuccess } from "../utils/toast.js";
 
 export default function AdminPanel() {
   const queryClient = useQueryClient();
@@ -27,36 +28,68 @@ export default function AdminPanel() {
 
   const approve = useMutation({
     mutationFn: async (id) => api.patch(`/admin/sellers/${id}/approve`),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("Seller approved successfully.");
+    },
+    onError: (err) => notifyError(err, "Unable to approve seller.")
   });
   const reject = useMutation({
     mutationFn: async (id) => api.patch(`/admin/sellers/${id}/reject`, { reason: sellerReason }),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("Seller rejected successfully.");
+    },
+    onError: (err) => notifyError(err, "Unable to reject seller.")
   });
   const needsInfo = useMutation({
     mutationFn: async (id) => api.patch(`/admin/sellers/${id}/needs-info`, { reason: sellerReason }),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("Seller marked as needs information.");
+    },
+    onError: (err) => notifyError(err, "Unable to update seller status.")
   });
 
   const reviewKyc = useMutation({
     mutationFn: async ({ id, status, rejectionReason }) => api.patch(`/kyc/${id}/review`, { status, rejectionReason }),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("KYC review submitted.");
+    },
+    onError: (err) => notifyError(err, "Unable to review KYC.")
   });
   const moderateProduct = useMutation({
     mutationFn: async ({ id, payload }) => api.patch(`/admin/products/${id}/moderate`, payload),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("Product moderation updated.");
+    },
+    onError: (err) => notifyError(err, "Unable to moderate product.")
   });
   const suspendUser = useMutation({
     mutationFn: async (id) => api.patch(`/admin/users/${id}/suspend`, { reason: "Admin status action" }),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("User suspended successfully.");
+    },
+    onError: (err) => notifyError(err, "Unable to suspend user.")
   });
   const reactivateUser = useMutation({
     mutationFn: async (id) => api.patch(`/admin/users/${id}/reactivate`),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("User reactivated successfully.");
+    },
+    onError: (err) => notifyError(err, "Unable to reactivate user.")
   });
   const saveSettings = useMutation({
     mutationFn: async () => api.patch("/admin/settings", settingsForm),
-    onSuccess: () => refresh()
+    onSuccess: () => {
+      refresh();
+      notifySuccess("Platform settings saved.");
+    },
+    onError: (err) => notifyError(err, "Unable to save platform settings.")
   });
 
   function refresh() {

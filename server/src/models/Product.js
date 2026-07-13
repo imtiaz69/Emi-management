@@ -12,6 +12,14 @@ const imageSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const colorSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    hex: { type: String, default: "#64748b", trim: true }
+  },
+  { _id: false }
+);
+
 const productSchema = new mongoose.Schema(
   {
     sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -39,6 +47,20 @@ const productSchema = new mongoose.Schema(
     lowStockThreshold: { type: Number, default: 3 },
     images: [imageSchema],
     emiAvailable: { type: Boolean, default: true },
+    emiInterestRate: { type: Number, default: 12, min: 0, max: 100 },
+    emiInterestType: { type: String, enum: ["flat", "reducing", "zero"], default: "flat" },
+    emiMinDownPayment: { type: Number, default: 0, min: 0 },
+    emiMaxTenureMonths: { type: Number, default: 12, min: 3, max: 60 },
+    colors: {
+      type: [colorSchema],
+      default: () => [{ name: "Default", hex: "#64748b" }],
+      validate: {
+        validator(colors) {
+          return Array.isArray(colors) && colors.length > 0 && colors.every((color) => color.name);
+        },
+        message: "At least one product color is required"
+      }
+    },
     featured: { type: Boolean, default: false },
     approvalStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "approved", index: true },
     status: { type: String, enum: ["active", "inactive"], default: "active" }

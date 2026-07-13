@@ -1,7 +1,7 @@
 const express = require("express");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
-const { validateBody, validateQuery, z } = require("../middleware/validate");
+const { objectId, validateBody, validateQuery, z } = require("../middleware/validate");
 const {
   cancelOrder,
   getOrderForUser,
@@ -28,8 +28,19 @@ const fromCartSchema = z.object({
   billingAddress: addressSchema.optional(),
   couponCode: z.string().trim().max(40).optional().default(""),
   deliveryCharge: z.coerce.number().min(0).optional().default(0),
+  itemIds: z.array(objectId).optional().default([]),
   emi: z
     .object({
+      items: z
+        .array(
+          z.object({
+            cartItemId: objectId,
+            downPayment: z.coerce.number().min(0),
+            tenureMonths: z.coerce.number().int().min(3).max(60)
+          })
+        )
+        .optional()
+        .default([]),
       downPayment: z.coerce.number().min(0).optional().default(0),
       interestRate: z.coerce.number().min(0).max(100).optional().default(12),
       interestType: z.enum(["flat", "reducing", "zero"]).optional().default("flat"),

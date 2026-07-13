@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ToastContainer } from "react-toastify";
 import { useAuth } from "./context/AuthContext.jsx";
 import Layout from "./components/Layout.jsx";
 import Home from "./pages/Home.jsx";
@@ -12,10 +13,12 @@ import Checkout from "./pages/Checkout.jsx";
 import Orders from "./pages/Orders.jsx";
 import OrderDetails from "./pages/OrderDetails.jsx";
 import BuyerPortal from "./pages/BuyerPortal.jsx";
+import BuyerTrustProfile from "./pages/BuyerTrustProfile.jsx";
 import LoanDetails from "./pages/LoanDetails.jsx";
 import AdminPanel from "./pages/AdminPanel.jsx";
 import SellerPending from "./pages/SellerPending.jsx";
 import AccountSettings from "./pages/AccountSettings.jsx";
+import SellerStoreProfile from "./pages/SellerStoreProfile.jsx";
 
 function Protected({ roles, requireActiveSeller = false, children }) {
   const { user, isAuthenticated } = useAuth();
@@ -35,6 +38,7 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/products/:id" element={<ProductDetails />} />
+          <Route path="/stores/:sellerId" element={<SellerStoreProfile />} />
           <Route
             path="/cart"
             element={
@@ -100,6 +104,14 @@ export default function App() {
             }
           />
           <Route
+            path="/buyers/:buyerId"
+            element={
+              <Protected roles={["seller", "admin"]}>
+                <BuyerTrustProfile />
+              </Protected>
+            }
+          />
+          <Route
             path="/account"
             element={
               <Protected>
@@ -117,6 +129,7 @@ export default function App() {
           />
         </Route>
       </Routes>
+      <ToastContainer position="top-right" autoClose={2800} newestOnTop closeOnClick pauseOnFocusLoss pauseOnHover theme="colored" />
     </BrowserRouter>
   );
 }

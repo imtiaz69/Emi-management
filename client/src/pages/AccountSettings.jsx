@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/http";
 import { useAuth } from "../context/AuthContext.jsx";
+import { notifyError, notifySuccess } from "../utils/toast.js";
 
 export default function AccountSettings() {
   const { user, updateUser } = useAuth();
@@ -12,18 +13,18 @@ export default function AccountSettings() {
     mutationFn: async () => api.patch("/auth/account", profile),
     onSuccess: ({ data }) => {
       updateUser(data.user);
-      alert("Account updated.");
+      notifySuccess("Account updated successfully.");
     },
-    onError: (err) => alert(err.response?.data?.message || "Unable to update account.")
+    onError: (err) => notifyError(err, "Unable to update account.")
   });
 
   const changePassword = useMutation({
     mutationFn: async () => api.patch("/auth/change-password", passwords),
     onSuccess: () => {
       setPasswords({ currentPassword: "", newPassword: "" });
-      alert("Password changed.");
+      notifySuccess("Password changed successfully.");
     },
-    onError: (err) => alert(err.response?.data?.message || "Unable to change password.")
+    onError: (err) => notifyError(err, "Unable to change password.")
   });
 
   return (

@@ -7,6 +7,8 @@ const loanSchema = new mongoose.Schema(
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
     orderItemId: { type: mongoose.Schema.Types.ObjectId },
+    selectedColorName: { type: String, trim: true },
+    selectedColorHex: { type: String, trim: true },
     source: { type: String, enum: ["offline", "marketplace"], default: "offline" },
     principal: { type: Number, required: true, min: 0 },
     downPayment: { type: Number, default: 0, min: 0 },

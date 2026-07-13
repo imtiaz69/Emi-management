@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { api } from "../api/http";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
+import { notifyError, notifyInfo, notifySuccess } from "../utils/toast.js";
 
 export default function Orders() {
   const { user } = useAuth();
@@ -11,11 +12,27 @@ export default function Orders() {
   const orders = useQuery({ queryKey: ["orders"], queryFn: async () => (await api.get("/orders")).data });
   const payOrder = useMutation({
     mutationFn: async (id) => api.patch(`/orders/${id}/pay-mock`, { method: "mock_gateway" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      notifySuccess("Mock order payment recorded.");
+    },
+    onError: (err) => notifyError(err, "Unable to record mock payment.")
+  });
+  const stripePayOrder = useMutation({
+    mutationFn: async (id) => api.post("/payments/stripe/create-order-checkout-session", { orderId: id }),
+    onSuccess: ({ data }) => {
+      notifyInfo("Redirecting to Stripe for order payment.");
+      window.location.href = data.url;
+    },
+    onError: (err) => notifyError(err, "Unable to start Stripe order payment.")
   });
   const cancelOrder = useMutation({
     mutationFn: async (id) => api.patch(`/orders/${id}/cancel`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      notifySuccess("Order cancelled successfully.");
+    },
+    onError: (err) => notifyError(err, "Unable to cancel order.")
   });
 
   return (
@@ -41,7 +58,10 @@ export default function Orders() {
                   <td>{dayjs(order.createdAt).format("DD MMM YYYY")}</td>
                   <td className="table-action-cell">
                     <Link className="button tiny" to={`/orders/${order._id}`}>Details</Link>
-                    {user?.role === "buyer" && order.paymentStatus === "unpaid" && <button className="button tiny" onClick={() => payOrder.mutate(order._id)}>Mock pay</button>}
+                    {user?.role === "buyer" && order.paymentMode === "cash" && order.paymentStatus === "unpaid" && (
+                      <button className="button tiny" disabled={stripePayOrder.isPending} onClick={() => stripePayOrder.mutate(order._id)}>Pay with Stripe</button>
+                    )}
+                    {user?.role === "buyer" && order.paymentStatus === "unpaid" && <button className="button tiny ghost" onClick={() => payOrder.mutate(order._id)}>Mock pay</button>}
                     {order.fulfillmentStatus !== "cancelled" && order.fulfillmentStatus !== "delivered" && <button className="button tiny danger" onClick={() => cancelOrder.mutate(order._id)}>Cancel</button>}
                   </td>
                 </tr>
@@ -50,6 +70,8 @@ export default function Orders() {
             </tbody>
           </table>
         </div>
+        {stripePayOrder.isError && <p className="form-error">{stripePayOrder.error?.response?.data?.message || "Unable to start Stripe order payment"}</p>}
+        {payOrder.isError && <p className="form-error">{payOrder.error?.response?.data?.message || "Unable to record mock payment"}</p>}
       </section>
     </section>
   );

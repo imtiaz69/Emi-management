@@ -1,8 +1,9 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { Bell, LogOut, Package, ShieldCheck, Store, UserRound } from "lucide-react";
+import { Bell, Heart, LogOut, Store } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../api/http";
+import { notifySuccess } from "../utils/toast.js";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -11,6 +12,11 @@ export default function Layout() {
     queryFn: async () => (await api.get("/notifications")).data,
     enabled: Boolean(user)
   });
+
+  function handleLogout() {
+    logout();
+    notifySuccess("Logged out successfully.");
+  }
 
   return (
     <div className="app-shell">
@@ -25,6 +31,7 @@ export default function Layout() {
           <Link to="/#features">Features</Link>
           <Link to="/#about">About Us</Link>
           {user?.role === "buyer" && <NavLink to="/cart">Cart</NavLink>}
+          {user?.role === "buyer" && <NavLink to="/buyer?tab=wishlist"><Heart size={15} /> Wishlist</NavLink>}
           {user?.role === "buyer" && <NavLink to="/orders">Orders</NavLink>}
           {user?.role === "seller" && <NavLink to="/orders">Orders</NavLink>}
           {user?.role === "seller" && <NavLink to="/seller">Seller Dashboard</NavLink>}
@@ -39,7 +46,7 @@ export default function Layout() {
             </span>
           )}
           {user ? (
-            <button className="ghost-button" onClick={logout}>
+            <button className="ghost-button" onClick={handleLogout}>
               <LogOut size={16} /> {user.name}
             </button>
           ) : (

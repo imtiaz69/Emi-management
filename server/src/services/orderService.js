@@ -5,11 +5,13 @@ const Loan = require("../models/Loan");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const Shipment = require("../models/Shipment");
+const Transaction = require("../models/Transaction");
 const { calculateSchedule } = require("./emiService");
 const { convertReservationToSale, releaseReservation, reserveStock } = require("./inventoryService");
 const { writeAudit } = require("./auditService");
 const { assertBuyerReadyForEmi } = require("./buyerReadinessService");
-const { createApplicationForLoan, recordDownPayment } = require("./loanService");
+const { buildReceiptNo, createApplicationForLoan, recordDownPayment } = require("./loanService");
+const { createMockGatewayReference } = require("./paymentService");
 
 function buildOrderNo() {
   return `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -35,28 +37,36 @@ async function calculateDiscount(code, subtotal, session) {
   return { discount: Math.min(discount, subtotal), coupon };
 }
 
-async function createOrderFromCart({ buyerId, shippingAddress, billingAddress, couponCode, deliveryCharge = 0, emi = {} }) {
+async function createOrderFromCart({ buyerId, shippingAddress, billingAddress, couponCode, deliveryCharge = 0, itemIds = [], emi = {} }) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const cart = await Cart.findOne({ buyerId }).session(session);
     if (!cart || cart.items.length === 0) throw new Error("Cart is empty");
+    const selectedItemIds = new Set((itemIds || []).map(String));
+    const selectedCartItems = selectedItemIds.size
+      ? cart.items.filter((item) => selectedItemIds.has(item._id.toString()))
+      : cart.items;
+    if (selectedCartItems.length === 0) throw new Error("Select at least one cart item before checkout");
 
     const orderItems = [];
-    for (const cartItem of cart.items) {
+    for (const cartItem of selectedCartItems) {
       const product = await Product.findOne({ _id: cartItem.productId, status: "active" }).session(session);
       if (!product) throw new Error("A product in your cart is no longer available");
       if (product.stock < cartItem.quantity) throw new Error(`${product.name} has only ${product.stock} item(s) available`);
       orderItems.push({
         product,
+        cartItemId: cartItem._id,
         productId: product._id,
         sellerId: product.sellerId,
         name: product.name,
         quantity: cartItem.quantity,
         unitPrice: product.price,
         totalPrice: product.price * cartItem.quantity,
-        financeMode: cartItem.selectedFinanceMode
+        financeMode: cartItem.selectedFinanceMode,
+        selectedColorName: cartItem.selectedColorName,
+        selectedColorHex: cartItem.selectedColorHex
       });
     }
     if (orderItems.some((item) => item.financeMode === "emi")) {
@@ -105,7 +115,16 @@ async function createOrderFromCart({ buyerId, shippingAddress, billingAddress, c
     }
 
     await createRequestedLoansForEmiItems(order, emi, session);
-    await Cart.findOneAndUpdate({ buyerId }, { $set: { items: [] } }, { session });
+    if (selectedItemIds.size) {
+      const selectedObjectIds = [...selectedItemIds].map((id) => new mongoose.Types.ObjectId(id));
+      await Cart.findOneAndUpdate(
+        { buyerId },
+        { $pull: { items: { _id: { $in: selectedObjectIds } } } },
+        { session }
+      );
+    } else {
+      await Cart.findOneAndUpdate({ buyerId }, { $set: { items: [] } }, { session });
+    }
     await writeAudit(buyerId, "order.created", "Order", order._id, { orderNo: order.orderNo }, { session });
 
     await session.commitTransaction();
@@ -122,18 +141,25 @@ async function createRequestedLoansForEmiItems(order, emi, session) {
   const emiItems = order.items.filter((item) => item.financeMode === "emi");
   if (!emiItems.length) return;
 
-  const totalEmiPrincipal = emiItems.reduce((sum, item) => sum + item.totalPrice, 0);
-    const requestedDownPayment = Math.min(Number(emi.downPayment || 0), totalEmiPrincipal - 1);
-  const downPaymentRatio = totalEmiPrincipal > 0 ? requestedDownPayment / totalEmiPrincipal : 0;
+  const emiByCartItemId = new Map((emi.items || []).map((item) => [item.cartItemId, item]));
 
   for (const item of emiItems) {
-    const downPayment = Math.round(item.totalPrice * downPaymentRatio);
+    const product = await Product.findById(item.productId).session(session);
+    if (!product) throw new Error("EMI product not found");
+    const itemConfig = emiByCartItemId.get(item.cartItemId?.toString());
+    const minDownPayment = Number(product.emiMinDownPayment || 0) * Number(item.quantity || 1);
+    const downPayment = Number(itemConfig?.downPayment ?? Math.max(minDownPayment, Number(emi.downPayment || 0)));
+    const tenureMonths = Number(itemConfig?.tenureMonths ?? Math.min(Number(emi.tenureMonths || product.emiMaxTenureMonths || 12), Number(product.emiMaxTenureMonths || 12)));
+    if (downPayment < minDownPayment) throw new Error(`${product.name} requires minimum down payment BDT ${minDownPayment}`);
+    if (downPayment >= item.totalPrice) throw new Error(`${product.name} down payment must be lower than product total`);
+    if (tenureMonths > Number(product.emiMaxTenureMonths || 12)) throw new Error(`${product.name} maximum EMI tenure is ${product.emiMaxTenureMonths} months`);
+
     const result = calculateSchedule({
       principal: item.totalPrice,
       downPayment,
-      interestRate: Number(emi.interestRate ?? 12),
-      interestType: emi.interestType || "flat",
-      tenureMonths: Number(emi.tenureMonths ?? 6)
+      interestRate: Number(product.emiInterestRate || 0),
+      interestType: product.emiInterestType || "flat",
+      tenureMonths
     });
 
     const loan = await Loan.create(
@@ -147,9 +173,11 @@ async function createRequestedLoansForEmiItems(order, emi, session) {
           source: "marketplace",
           principal: item.totalPrice,
           downPayment,
-          interestRate: Number(emi.interestRate ?? 12),
-          interestType: emi.interestType || "flat",
-          tenureMonths: Number(emi.tenureMonths ?? 6),
+          interestRate: Number(product.emiInterestRate || 0),
+          interestType: product.emiInterestType || "flat",
+          tenureMonths,
+          selectedColorName: item.selectedColorName,
+          selectedColorHex: item.selectedColorHex,
           lateFeePolicy: emi.lateFeePolicy || { type: "daily", value: 20 },
           totalPayable: result.totalPayable,
           status: "requested"
@@ -240,12 +268,57 @@ async function cancelOrder(orderId, user) {
 }
 
 async function markOrderPaid(orderId, user, method = "mock_gateway") {
+  return markOrderPaidWithOptions(orderId, user, method);
+}
+
+function allocateCashOrderPayments(order) {
+  const sellerTotals = new Map();
+  for (const item of order.items.filter((row) => row.financeMode === "cash")) {
+    const sellerId = item.sellerId.toString();
+    sellerTotals.set(sellerId, Number(sellerTotals.get(sellerId) || 0) + Number(item.totalPrice || 0));
+  }
+
+  const entries = [...sellerTotals.entries()];
+  const subtotal = entries.reduce((sum, [, amount]) => sum + amount, 0);
+  if (!subtotal) return [];
+  const payableTotal = Math.round(Number(order.total || subtotal || 0));
+  let allocated = 0;
+
+  return entries.map(([sellerId, sellerSubtotal], index) => {
+    const amount = index === entries.length - 1 ? payableTotal - allocated : Math.round((payableTotal * sellerSubtotal) / subtotal);
+    allocated += amount;
+    return { sellerId, amount: Math.max(amount, 0) };
+  }).filter((entry) => entry.amount > 0);
+}
+
+async function markOrderPaidWithOptions(orderId, user, method = "mock_gateway", options = {}) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const order = await Order.findOne({ _id: orderId, buyerId: user._id, paymentStatus: { $ne: "paid" } }).session(session);
+    const order = await Order.findOne({ _id: orderId, buyerId: user._id }).session(session);
     if (!order) throw new Error("Payable order not found");
+    if (order.paymentStatus === "paid") {
+      await session.commitTransaction();
+      return getOrderForUser(order._id, user);
+    }
+    if (order.paymentMode !== "cash" || order.paymentStatus !== "unpaid") {
+      const error = new Error("Only unpaid cash orders can be paid through this checkout");
+      error.status = 400;
+      throw error;
+    }
+
+    const actorId = options.recordedBy || user._id;
+    const paymentDate = options.paymentDate || new Date();
+    const gatewayRef = options.gatewayRef || (method === "mock_gateway" ? createMockGatewayReference("ORDER") : undefined);
+    const notes = options.notes || (method === "stripe" ? "Stripe Checkout cash order payment" : "Cash order payment");
+    const paymentAllocations = allocateCashOrderPayments(order);
+    if (!paymentAllocations.length) {
+      const error = new Error("This order has no payable cash items");
+      error.status = 400;
+      throw error;
+    }
+
     for (const item of order.items.filter((row) => row.financeMode === "cash")) {
       const product = await Product.findById(item.productId).session(session);
       if (product) {
@@ -258,7 +331,33 @@ async function markOrderPaid(orderId, user, method = "mock_gateway") {
       if (item.financeMode === "cash") item.fulfillmentStatus = "confirmed";
     });
     await order.save({ session });
-    await writeAudit(user._id, "order.paid", "Order", order._id, { method }, { session });
+
+    const transactions = await Transaction.insertMany(
+      paymentAllocations.map((entry) => ({
+        orderId: order._id,
+        transactionType: "order_payment",
+        buyerId: order.buyerId,
+        sellerId: entry.sellerId,
+        amount: entry.amount,
+        method,
+        paymentDate,
+        gatewayRef: gatewayRef ? `${gatewayRef}:${entry.sellerId}` : undefined,
+        receiptNo: buildReceiptNo("ORD"),
+        recordedBy: actorId,
+        notes,
+        status: "confirmed"
+      })),
+      { session }
+    );
+
+    await writeAudit(
+      actorId,
+      "order.paid",
+      "Order",
+      order._id,
+      { method, transactionIds: transactions.map((transaction) => transaction._id) },
+      { session }
+    );
     await session.commitTransaction();
     return getOrderForUser(order._id, user);
   } catch (error) {
@@ -309,5 +408,6 @@ module.exports = {
   getOrderForUser,
   listOrdersForUser,
   markOrderPaid,
+  markOrderPaidWithOptions,
   updateOrderFulfillment
 };
