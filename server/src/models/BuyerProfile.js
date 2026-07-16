@@ -1,8 +1,22 @@
 const mongoose = require("mongoose");
 
+const fileSchema = new mongoose.Schema(
+  {
+    originalName: String,
+    filename: String,
+    path: String,
+    publicId: String,
+    resourceType: String,
+    mimetype: String,
+    size: Number
+  },
+  { _id: false }
+);
+
 const buyerProfileSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true },
+    profilePhoto: fileSchema,
     address: { type: String, default: "" },
     nidNumber: { type: String, default: "" },
     emergencyContactName: { type: String, default: "" },

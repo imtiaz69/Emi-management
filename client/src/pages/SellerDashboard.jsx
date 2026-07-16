@@ -5,8 +5,11 @@ import { BarChart3, CheckCircle2, Eye, Package, RefreshCcw, XCircle } from "luci
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import dayjs from "dayjs";
 import { api, openProtectedFile } from "../api/http";
+import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
+import ProtectedImage from "../components/ProtectedImage.jsx";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
+import { formatKycType } from "../utils/kyc.js";
 import { generateReceiptPdf } from "../utils/receipt.js";
 import { notifyError, notifyInfo, notifySuccess } from "../utils/toast.js";
 
@@ -1037,22 +1040,32 @@ export default function SellerDashboard() {
                       (pendingKyc.data || []).map((doc) => (
                         <tr key={doc._id}>
                           <td>
-                            {buyerProfilePath(doc.userId) ? (
-                              <Link className="inline-profile-link" to={buyerProfilePath(doc.userId)}>{doc.userId?.name || "Buyer"}</Link>
-                            ) : (
-                              doc.userId?.name
-                            )}
-                            <br /><span style={{ fontSize: "0.85rem", color: "#888" }}>{doc.userId?.email}</span>
+                            <div className="identity-cell">
+                              <ProtectedImage
+                                src={doc.buyerProfile?.profilePhoto?.downloadUrl}
+                                alt={doc.userId?.name || "Buyer"}
+                                className="avatar-image"
+                                fallback={<div className="avatar-placeholder">{doc.userId?.name?.slice(0, 1) || "B"}</div>}
+                              />
+                              <div>
+                                {buyerProfilePath(doc.userId) ? (
+                                  <Link className="inline-profile-link" to={buyerProfilePath(doc.userId)}>{doc.userId?.name || "Buyer"}</Link>
+                                ) : (
+                                  doc.userId?.name
+                                )}
+                                <br /><span style={{ fontSize: "0.85rem", color: "#888" }}>{doc.userId?.email}</span>
+                              </div>
+                            </div>
                           </td>
-                          <td>{doc.type.toUpperCase()}</td>
+                          <td>{formatKycType(doc.type)}</td>
                           <td>
                             {(doc.files || []).map((file) => (
-                              <div key={file.filename}>
-                                <button className="button tiny ghost" type="button" onClick={() => openProtectedFile(file.downloadUrl)}>{file.originalName}</button>
+                              <div key={file.filename || file.downloadUrl}>
+                                <ProtectedDocumentViewer file={file} label={file.originalName || formatKycType(doc.type)} />
                               </div>
                             ))}
                             {doc.selfie && (
-                              <div><button className="button tiny ghost" type="button" onClick={() => openProtectedFile(doc.selfie.downloadUrl)}>Selfie</button></div>
+                              <div><ProtectedDocumentViewer file={doc.selfie} label="Selfie" /></div>
                             )}
                           </td>
                           <td className="table-action-cell">

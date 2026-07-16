@@ -94,14 +94,15 @@ router.get(
     const scopedTransactionFilter = { ...sellerFilter, buyerId };
     const scopedOrderFilter = req.user.role === "seller" ? { buyerId, sellerIds: req.user._id } : { buyerId };
 
-    const [profile, latestKyc, loans, schedules, transactions, orders] = await Promise.all([
+    const [profile, kycDocuments, loans, schedules, transactions, orders] = await Promise.all([
       BuyerProfile.findOne({ userId: buyerId }).lean(),
-      KYCDocument.findOne({ userId: buyerId }).select("type status reviewedAt rejectionReason createdAt").sort({ createdAt: -1 }).lean(),
+      KYCDocument.find({ userId: buyerId }).select("type status reviewedAt rejectionReason createdAt files selfie").sort({ createdAt: -1 }).lean(),
       Loan.find(scopedLoanFilter).populate("productId", "name price category images").sort({ createdAt: -1 }).limit(50).lean(),
       EMISchedule.find(scopedScheduleFilter).sort({ dueDate: 1 }).lean(),
       Transaction.find(scopedTransactionFilter).populate("loanId", "_id productId status").populate("orderId", "orderNo").sort({ paymentDate: -1 }).limit(25).lean(),
       Order.find(scopedOrderFilter).select("orderNo total paymentMode paymentStatus fulfillmentStatus createdAt items").sort({ createdAt: -1 }).limit(25).lean()
     ]);
+    const latestKyc = kycDocuments[0];
 
     const openSchedules = schedules.filter((schedule) => ["pending", "partial", "overdue"].includes(schedule.status));
     const overdueSchedules = schedules.filter((schedule) => schedule.status === "overdue");
@@ -124,7 +125,8 @@ router.get(
             occupation: profile.occupation,
             employmentType: profile.employmentType,
             riskScore: profile.riskScore,
-            riskCategory: profile.riskCategory
+            riskCategory: profile.riskCategory,
+            profilePhoto: profile.profilePhoto?.path ? sanitizeFile(profile.profilePhoto, `/api/buyer/profile-photo/${buyerId}`) : undefined
           }
         : null,
       kyc: latestKyc
@@ -136,6 +138,7 @@ router.get(
             rejectionReason: latestKyc.rejectionReason
           }
         : null,
+      kycDocuments: kycDocuments.map(sanitizeKycDocument),
       stats: {
         totalLoans: loans.length,
         activeLoans: loans.filter((loan) => loan.status === "active").length,
@@ -170,6 +173,30 @@ function maskSensitive(value = "") {
   if (!text) return "";
   if (text.length <= 4) return "****";
   return `${"*".repeat(Math.max(text.length - 4, 4))}${text.slice(-4)}`;
+}
+
+function sanitizeKycDocument(doc) {
+  const id = doc._id?.toString();
+  return {
+    _id: id,
+    type: doc.type,
+    status: doc.status,
+    uploadedAt: doc.createdAt,
+    reviewedAt: doc.reviewedAt,
+    rejectionReason: doc.rejectionReason,
+    files: (doc.files || []).map((file, index) => sanitizeFile(file, `/api/kyc/${id}/files/${index}`)),
+    selfie: doc.selfie ? sanitizeFile(doc.selfie, `/api/kyc/${id}/files/selfie`) : undefined
+  };
+}
+
+function sanitizeFile(file, downloadUrl) {
+  return {
+    originalName: file.originalName,
+    filename: file.filename,
+    mimetype: file.mimetype,
+    size: file.size,
+    downloadUrl
+  };
 }
 
 module.exports = router;

@@ -8,6 +8,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { isStrongPassword } = require("../utils/password");
 const { createRefreshTokenValue, getRefreshExpiry, hashToken, signToken } = require("../utils/tokens");
 const { writeAudit } = require("../services/auditService");
+const { sendVerificationEmail } = require("../services/emailService");
 const { validateBody, z } = require("../middleware/validate");
 const { authenticate } = require("../middleware/auth");
 
@@ -32,6 +33,9 @@ const loginSchema = z.object({
 const verifyOtpSchema = z.object({
   email: z.string().trim().email(),
   otp: z.string().trim().min(4).max(10)
+});
+const resendVerificationSchema = z.object({
+  email: z.string().trim().email()
 });
 const forgotPasswordSchema = z.object({
   email: z.string().trim().email()
@@ -58,21 +62,24 @@ router.post(
   validateBody(registerSchema),
   asyncHandler(async (req, res) => {
     const { name, email, phone, password, role, shopName, ownerName, address, businessType, tradeLicenseNo, nidNumber } = req.body;
+    const normalizedEmail = email.toLowerCase();
+    const normalizedPhone = normalizeBangladeshPhone(phone);
     if (!["seller", "buyer"].includes(role)) return res.status(400).json({ message: "Role must be seller or buyer" });
     if (!isStrongPassword(password)) return res.status(400).json({ message: "Password must be 8+ chars with uppercase, number, and special character" });
 
-    const exists = await User.findOne({ $or: [{ email: email?.toLowerCase() }, { phone }] });
+    const exists = await User.findOne({ $or: [{ email: normalizedEmail }, { phone: { $in: getPhoneLookupVariants(normalizedPhone) } }] });
     if (exists) return res.status(409).json({ message: "Email or phone already exists" });
 
+    const otp = generateOtp();
     const user = await User.create({
       name,
-      email,
-      phone,
+      email: normalizedEmail,
+      phone: normalizedPhone,
       passwordHash: await bcrypt.hash(password, 10),
       role,
       status: role === "seller" ? "pending_admin_approval" : "active",
-      isVerified: role === "buyer",
-      otpCode: "123456",
+      isVerified: false,
+      otpCode: otp,
       otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     });
 
@@ -89,8 +96,15 @@ router.post(
       await BuyerProfile.create({ userId: user._id, address: address || "", nidNumber: nidNumber || "" });
     }
 
+    const emailResult = await sendVerificationEmail({ to: user.email, otp, name: user.name });
     await writeAudit(user._id, "auth.registered", "User", user._id, { role });
-    res.status(201).json({ ...(await issueTokens(user, req)), user: sanitizeUser(user), mockOtp: "123456" });
+    res.status(201).json({
+      message: "Account created. Please verify your email before logging in.",
+      verificationRequired: true,
+      email: user.email,
+      user: sanitizeUser(user),
+      ...getDevelopmentOtpPayload(emailResult, otp)
+    });
   })
 );
 
@@ -115,6 +129,13 @@ router.post(
     user.lockUntil = undefined;
     user.lastLoginAt = new Date();
     await user.save();
+    if (!user.isVerified) {
+      return res.status(403).json({
+        message: "Please verify your email before logging in.",
+        verificationRequired: true,
+        email: user.email
+      });
+    }
     res.json({ ...(await issueTokens(user, req)), user: sanitizeUser(user) });
   })
 );
@@ -159,15 +180,35 @@ router.post(
 router.post(
   "/verify-otp",
   validateBody(verifyOtpSchema),
+  asyncHandler(verifyEmailOtp)
+);
+
+router.post(
+  "/verify-email",
+  validateBody(verifyOtpSchema),
+  asyncHandler(verifyEmailOtp)
+);
+
+router.post(
+  "/resend-verification",
+  validateBody(resendVerificationSchema),
   asyncHandler(async (req, res) => {
-    const { email, otp } = req.body;
-    const user = await User.findOne({ email: email?.toLowerCase() });
-    if (!user || user.otpCode !== otp || user.otpExpiresAt < new Date()) return res.status(400).json({ message: "Invalid or expired OTP" });
-    user.isVerified = true;
-    user.otpCode = undefined;
-    user.otpExpiresAt = undefined;
+    const user = await User.findOne({ email: req.body.email.toLowerCase() });
+    if (!user) return res.json({ message: "If the email exists and is unverified, a verification code has been sent." });
+    if (user.isVerified) return res.json({ message: "Email is already verified.", alreadyVerified: true });
+
+    const otp = generateOtp();
+    user.otpCode = otp;
+    user.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
-    res.json({ message: "Verified", user: sanitizeUser(user) });
+    const emailResult = await sendVerificationEmail({ to: user.email, otp, name: user.name });
+    await writeAudit(user._id, "auth.verification_resent", "User", user._id);
+    res.json({
+      message: "Verification code sent. Please check your email.",
+      verificationRequired: true,
+      email: user.email,
+      ...getDevelopmentOtpPayload(emailResult, otp)
+    });
   })
 );
 
@@ -225,13 +266,54 @@ router.patch(
   authenticate,
   validateBody(accountSchema),
   asyncHandler(async (req, res) => {
-    const existingPhone = await User.findOne({ phone: req.body.phone, _id: { $ne: req.user._id } });
+    const normalizedPhone = normalizeBangladeshPhone(req.body.phone);
+    const existingPhone = await User.findOne({ phone: { $in: getPhoneLookupVariants(normalizedPhone) }, _id: { $ne: req.user._id } });
     if (existingPhone) return res.status(409).json({ message: "Phone number already exists" });
-    const user = await User.findByIdAndUpdate(req.user._id, { name: req.body.name, phone: req.body.phone }, { new: true });
+    const user = await User.findByIdAndUpdate(req.user._id, { name: req.body.name, phone: normalizedPhone }, { new: true });
     await writeAudit(req.user._id, "auth.account_updated", "User", user._id);
     res.json({ user: sanitizeUser(user) });
   })
 );
+
+async function verifyEmailOtp(req, res) {
+  const { email, otp } = req.body;
+  const user = await User.findOne({ email: email?.toLowerCase() });
+  if (!user || user.otpCode !== otp || !user.otpExpiresAt || user.otpExpiresAt < new Date()) return res.status(400).json({ message: "Invalid or expired OTP" });
+  user.isVerified = true;
+  user.otpCode = undefined;
+  user.otpExpiresAt = undefined;
+  await user.save();
+  await writeAudit(user._id, "auth.email_verified", "User", user._id);
+  res.json({ message: "Email verified successfully. You can now log in.", user: sanitizeUser(user) });
+}
+
+function generateOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function normalizeBangladeshPhone(phone) {
+  const compact = String(phone || "").trim().replace(/[\s().-]/g, "");
+  if (/^01\d{9}$/.test(compact)) return `+88${compact}`;
+  if (/^8801\d{9}$/.test(compact)) return `+${compact}`;
+  if (/^\+8801\d{9}$/.test(compact)) return compact;
+  const error = new Error("Please enter a valid Bangladesh phone number, for example 01700000000 or +8801700000000");
+  error.status = 400;
+  throw error;
+}
+
+function getPhoneLookupVariants(normalizedPhone) {
+  const local = normalizedPhone.replace(/^\+88/, "");
+  const internationalWithoutPlus = normalizedPhone.replace(/^\+/, "");
+  return [...new Set([normalizedPhone, local, internationalWithoutPlus])];
+}
+
+function getDevelopmentOtpPayload(emailResult, otp) {
+  const shouldExposeOtp = process.env.NODE_ENV !== "production" || process.env.EXPOSE_EMAIL_OTP === "true";
+  return {
+    ...(emailResult?.mocked || shouldExposeOtp ? { mockOtp: otp } : {}),
+    ...(emailResult?.error ? { emailWarning: emailResult.error } : {})
+  };
+}
 
 function sanitizeUser(user) {
   return {

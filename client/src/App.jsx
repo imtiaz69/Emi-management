@@ -5,6 +5,7 @@ import Layout from "./components/Layout.jsx";
 import Home from "./pages/Home.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
+import VerifyEmail from "./pages/VerifyEmail.jsx";
 import SellerDashboard from "./pages/SellerDashboard.jsx";
 import Marketplace from "./pages/Marketplace.jsx";
 import ProductDetails from "./pages/ProductDetails.jsx";
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/products/:id" element={<ProductDetails />} />
           <Route path="/stores/:sellerId" element={<SellerStoreProfile />} />

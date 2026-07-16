@@ -1,11 +1,17 @@
 const express = require("express");
+const fs = require("fs");
 const BuyerProfile = require("../models/BuyerProfile");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
+const { assertUploadedFilesSafe, createUploader } = require("../middleware/upload");
 const { validateBody, z } = require("../middleware/validate");
 const { getBuyerReadiness } = require("../services/buyerReadinessService");
+const { deleteUploadedFile, uploadFile } = require("../utils/cloudinary");
+const { sendProtectedFile } = require("../utils/fileDelivery");
+const { writeAudit } = require("../services/auditService");
 
 const router = express.Router();
+const upload = createUploader("profiles");
 
 const buyerProfileSchema = z.object({
   address: z.string().trim().min(3).max(300),
@@ -24,7 +30,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const profile = await BuyerProfile.findOneAndUpdate({ userId: req.user._id }, { $setOnInsert: { userId: req.user._id } }, { new: true, upsert: true });
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ profile, readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
   })
 );
 
@@ -36,8 +42,84 @@ router.patch(
   asyncHandler(async (req, res) => {
     const profile = await BuyerProfile.findOneAndUpdate({ userId: req.user._id }, { ...req.body, userId: req.user._id }, { new: true, upsert: true });
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ profile, readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
   })
 );
+
+router.post(
+  "/profile-photo",
+  authenticate,
+  authorize("buyer"),
+  upload.single("profilePhoto"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: "Please upload a profile picture" });
+    await assertUploadedFilesSafe([req.file]);
+
+    const currentProfile = await BuyerProfile.findOneAndUpdate(
+      { userId: req.user._id },
+      { $setOnInsert: { userId: req.user._id } },
+      { new: true, upsert: true }
+    );
+    const previousPhoto = currentProfile.profilePhoto?.path ? currentProfile.profilePhoto.toObject?.() || currentProfile.profilePhoto : null;
+    currentProfile.profilePhoto = await uploadAndBuild(req.file, `profiles/${req.user._id}`);
+    await currentProfile.save();
+    if (previousPhoto) await deleteUploadedFile(previousPhoto);
+    await writeAudit(req.user._id, "buyer.profile_photo.updated", "BuyerProfile", currentProfile._id);
+
+    const readiness = await getBuyerReadiness(req.user._id);
+    res.json({ profile: sanitizeBuyerProfile(currentProfile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+  })
+);
+
+router.get(
+  "/profile-photo/:buyerId",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    if (!["seller", "admin"].includes(req.user.role) && req.user._id.toString() !== req.params.buyerId) {
+      return res.status(403).json({ message: "Not authorized to view this buyer profile picture" });
+    }
+
+    const profile = await BuyerProfile.findOne({ userId: req.params.buyerId }).select("profilePhoto userId");
+    const file = profile?.profilePhoto;
+    if (!file?.path) return res.status(404).json({ message: "Buyer profile picture not found" });
+    return sendProtectedFile(res, file, { defaultName: "buyer-profile-picture", invalidPathMessage: "Invalid profile picture path" });
+  })
+);
+
+function sanitizeBuyerProfile(profile) {
+  const object = typeof profile?.toObject === "function" ? profile.toObject() : profile || {};
+  const userId = object.userId?.toString?.() || object.userId;
+  const { profilePhoto, ...rest } = object;
+  return {
+    ...rest,
+    profilePhoto: profilePhoto?.path ? sanitizeFile(profilePhoto, `/api/buyer/profile-photo/${userId}`) : undefined
+  };
+}
+
+function sanitizeFile(file, downloadUrl) {
+  return {
+    originalName: file.originalName,
+    filename: file.filename,
+    mimetype: file.mimetype,
+    size: file.size,
+    downloadUrl
+  };
+}
+
+async function uploadAndBuild(file, folder) {
+  const result = await uploadFile(file.path, folder, { private: true });
+  if (!result.local) {
+    await fs.promises.unlink(file.path).catch(() => {});
+  }
+  return {
+    originalName: file.originalname,
+    filename: file.filename,
+    path: result.secure_url,
+    publicId: result.public_id,
+    resourceType: result.resource_type,
+    mimetype: file.mimetype,
+    size: file.size
+  };
+}
 
 module.exports = router;

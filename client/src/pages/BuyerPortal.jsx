@@ -4,8 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { Heart, ShoppingCart, Trash2, UserRound } from "lucide-react";
 import { api } from "../api/http";
+import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
+import ProtectedImage from "../components/ProtectedImage.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import StatCard from "../components/StatCard.jsx";
+import { KYC_DOCUMENT_TYPES, formatKycType } from "../utils/kyc.js";
 import { generateReceiptPdf } from "../utils/receipt.js";
 import { notifyError, notifyInfo, notifySuccess, notifyWarning } from "../utils/toast.js";
 
@@ -35,6 +38,7 @@ export default function BuyerPortal() {
   const handledStripeSessionRef = useRef("");
   const [kycType, setKycType] = useState("nid");
   const [files, setFiles] = useState([]);
+  const [profilePhotoFile, setProfilePhotoFile] = useState(null);
   const [profileForm, setProfileForm] = useState({
     address: "",
     nidNumber: "",
@@ -103,6 +107,20 @@ export default function BuyerPortal() {
     onError: (err) => {
       notifyError(err, "Unable to save buyer profile.");
     }
+  });
+
+  const uploadProfilePhoto = useMutation({
+    mutationFn: async () => {
+      const form = new FormData();
+      form.append("profilePhoto", profilePhotoFile);
+      return api.post("/buyer/profile-photo", form, { headers: { "Content-Type": "multipart/form-data" } });
+    },
+    onSuccess: () => {
+      setProfilePhotoFile(null);
+      queryClient.invalidateQueries({ queryKey: ["buyer-profile"] });
+      notifySuccess("Profile picture uploaded successfully.");
+    },
+    onError: (err) => notifyError(err, "Unable to upload profile picture.")
   });
 
   const addWishlistItemToCart = useMutation({
@@ -338,6 +356,23 @@ export default function BuyerPortal() {
           {activeTab === "profile" && (
             <section className="panel">
               <h2>Buyer profile</h2>
+              <div className="profile-photo-panel">
+                <ProtectedImage
+                  src={buyerProfile.data?.profile?.profilePhoto?.downloadUrl}
+                  alt="Buyer profile"
+                  className="profile-photo-preview"
+                  fallback={<div className="profile-photo-preview placeholder"><UserRound size={34} /></div>}
+                />
+                <div className="profile-photo-controls">
+                  <label>Profile picture
+                    <input type="file" accept=".jpg,.jpeg,.png,.webp,.avif" onChange={(e) => setProfilePhotoFile(e.target.files?.[0] || null)} />
+                  </label>
+                  <button className="button secondary" onClick={() => uploadProfilePhoto.mutate()} disabled={!profilePhotoFile || uploadProfilePhoto.isPending}>
+                    Upload picture
+                  </button>
+                  <p className="hint">This picture is visible to sellers and admins when they review your EMI trust profile.</p>
+                </div>
+              </div>
               <div className="form-grid compact">
                 <label>Address
                   <input value={profileForm.address} onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })} placeholder="Example: Akhalia, Sylhet" />
@@ -378,18 +413,37 @@ export default function BuyerPortal() {
               <h2>KYC upload</h2>
               <div className="form-grid compact">
                 <label>Document type
-                  <select value={kycType} onChange={(e) => setKycType(e.target.value)}><option value="nid">NID</option><option value="passport">Passport</option></select>
+                  <select value={kycType} onChange={(e) => setKycType(e.target.value)}>
+                    {KYC_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                  </select>
                 </label>
                 <label>Documents
-                  <input type="file" multiple accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => setFiles(e.target.files)} />
+                  <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.pdf" onChange={(e) => setFiles(e.target.files)} />
                 </label>
               </div>
+              <p className="hint">You can upload more records any time. Each submission supports up to 10 files.</p>
               <button className="button" onClick={() => uploadKyc.mutate()} disabled={!files.length || uploadKyc.isPending}>Upload documents</button>
               <div className="list-stack">
                 {(kyc.data || []).length === 0 ? (
                   <p className="hint">No KYC documents uploaded yet.</p>
                 ) : (
-                  (kyc.data || []).map((doc) => <div className="list-row" key={doc._id}><span>{doc.type.toUpperCase()}</span><StatusBadge status={doc.status} /></div>)
+                  (kyc.data || []).map((doc) => (
+                    <div className="list-row" key={doc._id}>
+                      <div>
+                        <strong>{formatKycType(doc.type)}</strong>
+                        <span>Uploaded {doc.createdAt ? dayjs(doc.createdAt).format("DD MMM YYYY") : "-"}</span>
+                      </div>
+                      <div className="button-row">
+                        {(doc.files || []).map((file) => (
+                          <ProtectedDocumentViewer key={file.downloadUrl} file={file} label={file.originalName || "Document"} />
+                        ))}
+                        {doc.selfie && (
+                          <ProtectedDocumentViewer file={doc.selfie} label="Selfie" />
+                        )}
+                        <StatusBadge status={doc.status} />
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             </section>

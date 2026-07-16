@@ -300,9 +300,13 @@ router.patch(
   asyncHandler(async (req, res) => {
     const loan = await Loan.findOne({ _id: req.params.id, sellerId: req.user._id, status: "requested" });
     if (!loan) return res.status(404).json({ message: "Loan request not found" });
-    const kyc = await KYCDocument.findOne({ userId: loan.buyerId }).sort({ createdAt: -1 });
-    const sellerReview = kyc ? await KYCReview.findOne({ kycDocumentId: kyc._id, reviewerRole: "seller", sellerId: req.user._id, status: "approved" }) : null;
-    if (!kyc || (kyc.status !== "approved" && !sellerReview)) return res.status(400).json({ message: "Cannot approve EMI request. Buyer's KYC must be approved by admin or this seller first." });
+    const kycDocs = await KYCDocument.find({ userId: loan.buyerId }).select("_id status").sort({ createdAt: -1 });
+    const kycDocIds = kycDocs.map((doc) => doc._id);
+    const adminApprovedKyc = kycDocs.some((doc) => doc.status === "approved");
+    const sellerApprovedKyc = kycDocIds.length
+      ? await KYCReview.exists({ kycDocumentId: { $in: kycDocIds }, reviewerRole: "seller", sellerId: req.user._id, status: "approved" })
+      : null;
+    if (!adminApprovedKyc && !sellerApprovedKyc) return res.status(400).json({ message: "Cannot approve EMI request. Buyer's KYC must be approved by admin or this seller first." });
     const approvedLoan = await approveLoanRequest(req.params.id, req.user._id, req.user._id);
     res.json(approvedLoan);
   })

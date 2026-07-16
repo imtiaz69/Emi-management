@@ -24,9 +24,10 @@ export default function Register() {
     event.preventDefault();
     setError("");
     try {
-      const { user } = await register({ ...form, role, ownerName: form.name });
-      notifySuccess(user.role === "seller" ? "Seller account created. Waiting for admin approval." : "Buyer account created successfully.");
-      navigate(user.role === "seller" ? "/seller" : "/buyer");
+      const data = await register({ ...form, role, ownerName: form.name });
+      const email = data.email || form.email;
+      notifySuccess("Account created. Please verify your email before logging in.");
+      navigate(`/verify-email?email=${encodeURIComponent(email)}`, { state: { email, mockOtp: data.mockOtp || "", emailWarning: data.emailWarning || "" } });
     } catch (err) {
       setError(err.response?.data?.message || "Registration failed");
       notifyError(err, "Registration failed");

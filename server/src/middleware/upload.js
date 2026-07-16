@@ -9,9 +9,14 @@ const policies = {
     allowedExtensions: [".jpg", ".jpeg", ".png", ".webp", ".avif"]
   },
   kyc: {
-    maxFiles: 4,
-    allowedMimeTypes: ["image/jpeg", "image/png", "application/pdf"],
-    allowedExtensions: [".jpg", ".jpeg", ".png", ".pdf"]
+    maxFiles: 11,
+    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/avif", "application/pdf"],
+    allowedExtensions: [".jpg", ".jpeg", ".png", ".webp", ".avif", ".pdf"]
+  },
+  profiles: {
+    maxFiles: 1,
+    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/avif"],
+    allowedExtensions: [".jpg", ".jpeg", ".png", ".webp", ".avif"]
   }
 };
 

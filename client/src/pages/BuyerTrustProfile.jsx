@@ -3,8 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { BadgeCheck, BriefcaseBusiness, CalendarClock, CreditCard, FileCheck2, Mail, MapPin, Phone, ShieldAlert, UserRound } from "lucide-react";
 import dayjs from "dayjs";
 import { api } from "../api/http";
+import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
+import ProtectedImage from "../components/ProtectedImage.jsx";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
+import { formatKycType } from "../utils/kyc.js";
 
 export default function BuyerTrustProfile() {
   const { buyerId } = useParams();
@@ -33,12 +36,18 @@ export default function BuyerTrustProfile() {
   const profile = data.profile || {};
   const stats = data.stats || {};
   const kyc = data.kyc;
+  const kycDocuments = data.kycDocuments || [];
   const nextDue = stats.nextDue;
 
   return (
     <section className="dashboard profile-page">
       <section className="profile-hero trust-hero">
-        <div className="profile-hero-icon"><UserRound size={36} /></div>
+        <ProtectedImage
+          src={profile.profilePhoto?.downloadUrl}
+          alt={buyer.name || "Buyer profile"}
+          className="profile-hero-photo"
+          fallback={<div className="profile-hero-icon"><UserRound size={36} /></div>}
+        />
         <div className="profile-hero-content">
           <span className={`badge ${profile.riskCategory || "pending"}`}>
             <ShieldAlert size={14} /> {profile.riskCategory || "Risk pending"}
@@ -82,7 +91,7 @@ export default function BuyerTrustProfile() {
           <h2><FileCheck2 size={18} /> KYC and next due</h2>
           <div className="profile-detail-list">
             <span><strong>KYC status</strong>{kyc ? <StatusBadge status={kyc.status} /> : "No KYC submitted"}</span>
-            <span><strong>Document type</strong>{kyc?.type || "-"}</span>
+            <span><strong>Latest document</strong>{kyc?.type ? formatKycType(kyc.type) : "-"}</span>
             <span><strong>Uploaded</strong>{kyc?.uploadedAt ? dayjs(kyc.uploadedAt).format("DD MMM YYYY") : "-"}</span>
             <span><strong>Reviewed</strong>{kyc?.reviewedAt ? dayjs(kyc.reviewedAt).format("DD MMM YYYY") : "-"}</span>
             <span><strong>Next due</strong>{nextDue ? `${formatBDT(scheduleBalance(nextDue))} on ${dayjs(nextDue.dueDate).format("DD MMM YYYY")}` : "No open EMI due"}</span>
@@ -90,6 +99,34 @@ export default function BuyerTrustProfile() {
           </div>
         </section>
       </div>
+
+      <section className="panel">
+        <h2><FileCheck2 size={18} /> Submitted buyer documents</h2>
+        {kycDocuments.length === 0 ? (
+          <p className="hint">No KYC documents submitted yet.</p>
+        ) : (
+          <div className="document-grid">
+            {kycDocuments.map((doc) => (
+              <article className="document-card" key={doc._id}>
+                <div className="document-card-heading">
+                  <strong>{formatKycType(doc.type)}</strong>
+                  <StatusBadge status={doc.status} />
+                </div>
+                <p className="hint">Uploaded {doc.uploadedAt ? dayjs(doc.uploadedAt).format("DD MMM YYYY") : "-"}</p>
+                <div className="button-row">
+                  {(doc.files || []).map((file) => (
+                    <ProtectedDocumentViewer key={file.downloadUrl} file={file} label={file.originalName || "Document"} />
+                  ))}
+                  {doc.selfie && (
+                    <ProtectedDocumentViewer file={doc.selfie} label="Selfie" />
+                  )}
+                </div>
+                {doc.rejectionReason && <p className="hint">Reason: {doc.rejectionReason}</p>}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="panel">
         <h2><CreditCard size={18} /> EMI relationship</h2>

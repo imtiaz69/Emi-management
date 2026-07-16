@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/http";
 import { useAuth } from "../context/AuthContext.jsx";
-import { notifyError, notifyInfo, notifySuccess } from "../utils/toast.js";
+import { notifyError, notifyInfo, notifySuccess, notifyWarning } from "../utils/toast.js";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -22,6 +22,12 @@ export default function Login() {
       navigate(user.role === "admin" ? "/admin" : user.role === "seller" ? "/seller" : "/buyer");
     } catch (err) {
       const message = err.response?.data?.message || "Login failed";
+      if (err.response?.data?.verificationRequired) {
+        const email = err.response.data.email || form.email;
+        notifyWarning(message);
+        navigate(`/verify-email?email=${encodeURIComponent(email)}`, { state: { email } });
+        return;
+      }
       setError(message);
       notifyError(err, "Login failed");
     }

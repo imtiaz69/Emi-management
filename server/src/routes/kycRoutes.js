@@ -1,7 +1,8 @@
 const fs = require("fs");
-const path = require("path");
 const express = require("express");
+const BuyerProfile = require("../models/BuyerProfile");
 const Loan = require("../models/Loan");
+const Order = require("../models/Order");
 const KYCDocument = require("../models/KYCDocument");
 const KYCReview = require("../models/KYCReview");
 const asyncHandler = require("../utils/asyncHandler");
@@ -9,13 +10,15 @@ const { authenticate, authorize } = require("../middleware/auth");
 const { requireVerified } = require("../middleware/security");
 const { assertUploadedFilesSafe, createUploader } = require("../middleware/upload");
 const { validateBody, z } = require("../middleware/validate");
-const { getSignedDeliveryUrl, uploadFile } = require("../utils/cloudinary");
+const { uploadFile } = require("../utils/cloudinary");
+const { sendProtectedFile } = require("../utils/fileDelivery");
 const { writeAudit } = require("../services/auditService");
 
 const router = express.Router();
 const upload = createUploader("kyc");
+const { KYC_DOCUMENT_TYPES } = KYCDocument;
 const uploadKycSchema = z.object({
-  type: z.enum(["nid", "passport"]).optional().default("nid")
+  type: z.enum(KYC_DOCUMENT_TYPES).optional().default("nid")
 });
 const kycReviewSchema = z.object({
   status: z.enum(["approved", "rejected"]),
@@ -27,7 +30,7 @@ router.post(
   authenticate,
   requireVerified,
   upload.fields([
-    { name: "documents", maxCount: 3 },
+    { name: "documents", maxCount: 10 },
     { name: "selfie", maxCount: 1 }
   ]),
   validateBody(uploadKycSchema),
@@ -62,7 +65,7 @@ router.get(
   authorize("seller", "admin"),
   asyncHandler(async (_req, res) => {
     const docs = await KYCDocument.find({ status: "pending" }).populate("userId", "name email phone").sort({ createdAt: -1 });
-    res.json(docs.map(sanitizeKycDocument));
+    res.json(await sanitizeKycDocumentsWithProfiles(docs));
   })
 );
 
@@ -81,7 +84,7 @@ router.get(
     })
       .populate("userId", "name email phone")
       .sort({ createdAt: -1 });
-    res.json(docs.map(sanitizeKycDocument));
+    res.json(await sanitizeKycDocumentsWithProfiles(docs));
   })
 );
 
@@ -114,21 +117,7 @@ router.get(
     const file = req.params.fileId === "selfie" ? doc.selfie : doc.files[Number(req.params.fileId)];
     if (!file?.path) return res.status(404).json({ message: "KYC file not found" });
 
-    const signedUrl = file.publicId && file.resourceType && getSignedDeliveryUrl(file.publicId, file.resourceType);
-    if (signedUrl) {
-      return res.redirect(signedUrl);
-    }
-
-    if (/^https?:\/\//i.test(file.path)) {
-      return res.redirect(file.path);
-    }
-
-    const uploadsRoot = path.resolve(process.env.UPLOAD_DIR || "uploads");
-    const absolutePath = path.resolve(file.path.replace(/^\/uploads\//, `${uploadsRoot}/`));
-    if (!absolutePath.startsWith(uploadsRoot)) return res.status(400).json({ message: "Invalid KYC file path" });
-
-    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(file.originalName || file.filename || "kyc-file")}"`);
-    return res.sendFile(absolutePath);
+    return sendProtectedFile(res, file, { defaultName: "kyc-file", invalidPathMessage: "Invalid KYC file path" });
   })
 );
 
@@ -200,23 +189,50 @@ async function canAccessKyc(user, doc) {
   if (user.role === "buyer") return doc.userId.toString() === user._id.toString();
   if (user.role === "seller") {
     if (doc.sellerId?.toString() === user._id.toString()) return true;
-    const relatedLoan = await Loan.exists({
-      sellerId: user._id,
-      buyerId: doc.userId,
-      status: { $in: ["requested", "approved", "active"] }
-    });
-    return Boolean(relatedLoan);
+    const [relatedLoan, relatedOrder] = await Promise.all([
+      Loan.exists({
+        sellerId: user._id,
+        buyerId: doc.userId,
+        status: { $in: ["requested", "approved", "active"] }
+      }),
+      Order.exists({ sellerIds: user._id, buyerId: doc.userId })
+    ]);
+    return Boolean(relatedLoan || relatedOrder);
   }
   return false;
 }
 
-function sanitizeKycDocument(doc) {
+async function sanitizeKycDocumentsWithProfiles(docs) {
+  const userIds = [...new Set(docs.map((doc) => getKycUserId(doc)).filter(Boolean))];
+  const profiles = await BuyerProfile.find({ userId: { $in: userIds } }).select("userId profilePhoto riskScore riskCategory occupation monthlyIncome").lean();
+  const profileMap = new Map(profiles.map((profile) => [profile.userId.toString(), profile]));
+  return docs.map((doc) => sanitizeKycDocument(doc, profileMap.get(getKycUserId(doc))));
+}
+
+function sanitizeKycDocument(doc, buyerProfile) {
   const object = typeof doc.toObject === "function" ? doc.toObject() : doc;
   const id = object._id?.toString();
   return {
     ...object,
     files: (object.files || []).map((file, index) => sanitizeFile(file, `/api/kyc/${id}/files/${index}`)),
-    selfie: object.selfie ? sanitizeFile(object.selfie, `/api/kyc/${id}/files/selfie`) : undefined
+    selfie: object.selfie ? sanitizeFile(object.selfie, `/api/kyc/${id}/files/selfie`) : undefined,
+    buyerProfile: buyerProfile ? sanitizeBuyerProfileSummary(buyerProfile) : undefined
+  };
+}
+
+function getKycUserId(doc) {
+  const object = typeof doc.toObject === "function" ? doc.toObject() : doc;
+  return object.userId?._id?.toString?.() || object.userId?.toString?.() || "";
+}
+
+function sanitizeBuyerProfileSummary(profile) {
+  const userId = profile.userId?.toString?.() || profile.userId;
+  return {
+    riskScore: profile.riskScore,
+    riskCategory: profile.riskCategory,
+    occupation: profile.occupation,
+    monthlyIncome: profile.monthlyIncome,
+    profilePhoto: profile.profilePhoto?.path ? sanitizeFile(profile.profilePhoto, `/api/buyer/profile-photo/${userId}`) : undefined
   };
 }
 

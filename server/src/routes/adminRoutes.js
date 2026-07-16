@@ -40,9 +40,10 @@ const settingsSchema = z.object({
 router.get(
   "/overview",
   asyncHandler(async (_req, res) => {
+    const verifiedSellerUserIds = await User.find({ role: "seller", isVerified: true }).distinct("_id");
     const [users, sellersPending, productsPending, activeLoans, orders, disputes, returns] = await Promise.all([
       User.countDocuments(),
-      SellerProfile.countDocuments({ approvalStatus: "pending" }),
+      SellerProfile.countDocuments({ approvalStatus: "pending", userId: { $in: verifiedSellerUserIds } }),
       Product.countDocuments({ approvalStatus: "pending" }),
       Loan.countDocuments({ status: "active" }),
       Order.countDocuments(),
@@ -56,7 +57,8 @@ router.get(
 router.get(
   "/sellers/pending",
   asyncHandler(async (_req, res) => {
-    const sellers = await SellerProfile.find({ approvalStatus: "pending" }).populate("userId", "name email phone status createdAt");
+    const verifiedSellerUserIds = await User.find({ role: "seller", isVerified: true }).distinct("_id");
+    const sellers = await SellerProfile.find({ approvalStatus: "pending", userId: { $in: verifiedSellerUserIds } }).populate("userId", "name email phone status isVerified createdAt");
     res.json(sellers);
   })
 );
@@ -85,11 +87,13 @@ router.patch(
   asyncHandler(async (req, res) => {
     const profile = await SellerProfile.findById(req.params.id);
     if (!profile) return res.status(404).json({ message: "Seller profile not found" });
+    const sellerUser = await User.findById(profile.userId).select("isVerified");
+    if (!sellerUser?.isVerified) return res.status(400).json({ message: "Seller must verify email before admin approval" });
     profile.approvalStatus = "approved";
     profile.approvedBy = req.user._id;
     profile.approvedAt = new Date();
     await profile.save();
-    await User.findByIdAndUpdate(profile.userId, { status: "active", isVerified: true });
+    await User.findByIdAndUpdate(profile.userId, { status: "active" });
     await writeAudit(req.user._id, "seller.approved", "SellerProfile", profile._id);
     res.json(profile);
   })

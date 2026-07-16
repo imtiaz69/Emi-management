@@ -18,11 +18,12 @@ export function AuthProvider({ children }) {
 
   async function register(payload) {
     const { data } = await api.post("/auth/register", payload);
-    persist(data);
+    if (data.token) persist(data);
     return data;
   }
 
   function persist(data) {
+    if (!data.token || !data.user) return;
     localStorage.setItem("emi_token", data.token);
     if (data.refreshToken) localStorage.setItem("emi_refresh_token", data.refreshToken);
     localStorage.setItem("emi_user", JSON.stringify(data.user));
