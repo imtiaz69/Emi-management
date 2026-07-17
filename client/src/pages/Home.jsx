@@ -2,8 +2,31 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, ShoppingBag } from "lucide-react";
-import { api } from "../api/http";
+import { api, downloadUrl } from "../api/http";
 import { useAuth } from "../context/AuthContext.jsx";
+
+function ProductCardImage({ product }) {
+  const [failed, setFailed] = useState(false);
+  const imagePath = product.images?.[0]?.path;
+
+  if (!imagePath || failed) {
+    return (
+      <div className="product-media" role="img" aria-label={`${product.name} image unavailable`}>
+        <ShoppingBag size={34} />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      className="product-image"
+      src={downloadUrl(imagePath)}
+      alt={product.name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 export default function Home() {
   const { user } = useAuth();
@@ -76,9 +99,7 @@ export default function Home() {
       <div className="product-grid">
         {(products.data || []).map((product) => (
           <article className="product-card" key={product._id}>
-            <div className="product-media">
-              <ShoppingBag size={34} />
-            </div>
+            <ProductCardImage product={product} />
             <h2>{product.name}</h2>
             <p>{product.description || "EMI-ready product from a local seller."}</p>
             <div className="product-meta">

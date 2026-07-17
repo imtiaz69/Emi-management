@@ -28,8 +28,12 @@ api.interceptors.response.use(
   }
 );
 
-export function downloadUrl(path) {
-  return `${import.meta.env.VITE_SERVER_URL || ""}${path}`;
+export function downloadUrl(path = "") {
+  if (!path || /^(?:https?:|blob:|data:)/i.test(path)) return path;
+
+  const serverUrl = (import.meta.env.VITE_SERVER_URL || "").replace(/\/$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${serverUrl}${normalizedPath}`;
 }
 
 export function normalizeApiPath(path = "") {
