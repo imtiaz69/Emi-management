@@ -1,4 +1,7 @@
 :root {
+  --button-primary: #2ca58d;
+  --button-primary-hover: #248a76;
+  --button-primary-ring: rgba(44, 165, 141, 0.18);
   color: #152321;
   background: #eef3f1;
   font-family: "Open Sans", sans-serif;
@@ -58,8 +61,21 @@ main { padding: clamp(14px, 2.5vw, 24px); }
 }
 
 .button {
-  background: #247a78;
+  background: var(--button-primary);
   color: white;
+}
+
+.button:not(.secondary):not(.danger):not(.ghost):hover {
+  background: var(--button-primary-hover);
+}
+
+.button:focus-visible,
+.sidebar-toggle:focus-visible,
+.category-chip:focus-visible,
+.color-choice:focus-visible,
+.image-preview-button:focus-visible {
+  outline: 3px solid var(--button-primary-ring);
+  outline-offset: 2px;
 }
 
 .button.secondary {
@@ -274,8 +290,8 @@ th { color: #57706a; font-size: 0.82rem; text-transform: uppercase; }
   cursor: pointer;
 }
 .color-choice.active {
-  border-color: #247a78;
-  box-shadow: 0 0 0 3px rgba(36, 122, 120, 0.16);
+  border-color: var(--button-primary);
+  box-shadow: 0 0 0 3px var(--button-primary-ring);
   color: #14524f;
 }
 .readonly-field {
@@ -576,8 +592,8 @@ th { color: #57706a; font-size: 0.82rem; text-transform: uppercase; }
   background: #ffffff;
 }
 .image-preview-button.active {
-  border-color: #247a78;
-  box-shadow: 0 0 0 3px rgba(36, 122, 120, 0.14);
+  border-color: var(--button-primary);
+  box-shadow: 0 0 0 3px var(--button-primary-ring);
 }
 .gallery-backdrop {
   position: fixed;
@@ -980,7 +996,7 @@ th { color: #57706a; font-size: 0.82rem; text-transform: uppercase; }
 
 .sidebar-toggle {
   border: 0;
-  background: #247a78;
+  background: var(--button-primary);
   color: white;
   padding: 0 16px;
   min-height: 44px;
@@ -1142,8 +1158,8 @@ th { color: #57706a; font-size: 0.82rem; text-transform: uppercase; }
 }
 
 .category-chip.active {
-  background: #247a78;
-  border-color: #247a78;
+  background: var(--button-primary);
+  border-color: var(--button-primary);
   color: #ffffff;
 }
 
