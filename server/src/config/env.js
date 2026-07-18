@@ -11,12 +11,15 @@ const envSchema = z.object({
   REFRESH_TOKEN_EXPIRES_IN_DAYS: z.coerce.number().int().positive().default(30),
   CLIENT_URL: z.string().url().optional(),
   APP_TIMEZONE: z.string().default("Asia/Dhaka"),
-  EMAIL_PROVIDER: z.enum(["mock", "gmail", "resend"]).default("mock"),
+  EMAIL_PROVIDER: z.enum(["mock", "gmail", "gmail_api", "resend"]).default("mock"),
   SMTP_HOST: z.string().default("smtp.gmail.com"),
   SMTP_PORT: z.coerce.number().int().positive().default(465),
   SMTP_SECURE: z.string().optional(),
   SMTP_USER: z.string().email().optional(),
   SMTP_APP_PASSWORD: z.string().optional(),
+  GMAIL_CLIENT_ID: z.string().optional(),
+  GMAIL_CLIENT_SECRET: z.string().optional(),
+  GMAIL_REFRESH_TOKEN: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   EXPOSE_EMAIL_OTP: z.string().optional(),
@@ -50,6 +53,12 @@ function validateEnv() {
   if (env.EMAIL_PROVIDER === "gmail") {
     if (!env.SMTP_USER) missing.push("SMTP_USER");
     if (!env.SMTP_APP_PASSWORD) missing.push("SMTP_APP_PASSWORD");
+  }
+  if (env.EMAIL_PROVIDER === "gmail_api") {
+    if (!env.SMTP_USER) missing.push("SMTP_USER");
+    if (!env.GMAIL_CLIENT_ID) missing.push("GMAIL_CLIENT_ID");
+    if (!env.GMAIL_CLIENT_SECRET) missing.push("GMAIL_CLIENT_SECRET");
+    if (!env.GMAIL_REFRESH_TOKEN) missing.push("GMAIL_REFRESH_TOKEN");
   }
   if (env.EMAIL_PROVIDER === "resend" && !env.RESEND_API_KEY) missing.push("RESEND_API_KEY");
   if (missing.length) {
