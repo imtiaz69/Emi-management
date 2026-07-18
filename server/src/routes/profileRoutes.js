@@ -6,6 +6,7 @@ const KYCDocument = require("../models/KYCDocument");
 const Loan = require("../models/Loan");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const Review = require("../models/Review");
 const SellerProfile = require("../models/SellerProfile");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
@@ -25,9 +26,9 @@ router.get(
 
     const [profile, products, productStats] = await Promise.all([
       SellerProfile.findOne({ userId: sellerId }).select("-tradeLicenseNo -rejectionReason").lean(),
-      Product.find({ sellerId, status: "active" }).sort({ featured: -1, createdAt: -1 }).limit(80).lean(),
+      Product.find({ sellerId, status: "active", approvalStatus: "approved" }).sort({ featured: -1, createdAt: -1 }).limit(80).lean(),
       Product.aggregate([
-        { $match: { sellerId: new mongoose.Types.ObjectId(sellerId), status: "active" } },
+        { $match: { sellerId: new mongoose.Types.ObjectId(sellerId), status: "active", approvalStatus: "approved" } },
         {
           $group: {
             _id: null,
@@ -41,6 +42,14 @@ router.get(
         }
       ])
     ]);
+    const productIds = products.map((product) => product._id);
+    const ratingRows = productIds.length
+      ? await Review.aggregate([
+          { $match: { productId: { $in: productIds }, status: "published" } },
+          { $group: { _id: null, average: { $avg: "$rating" }, count: { $sum: 1 } } }
+        ])
+      : [];
+    const rating = ratingRows[0] || { average: 0, count: 0 };
 
     const stats = productStats[0] || {
       totalProducts: 0,
@@ -60,7 +69,9 @@ router.get(
         totalStock: stats.totalStock || 0,
         categories: (stats.categories || []).filter(Boolean).sort(),
         minPrice: stats.minPrice || 0,
-        maxPrice: stats.maxPrice || 0
+        maxPrice: stats.maxPrice || 0,
+        averageRating: Number(Number(rating.average || 0).toFixed(1)),
+        reviewCount: rating.count || 0
       },
       products
     });

@@ -12,6 +12,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { validateBody, z } = require("../middleware/validate");
 const { writeAudit } = require("../services/auditService");
+const { createNotification } = require("../services/notificationService");
 
 const router = express.Router();
 router.use(authenticate, authorize("admin"));
@@ -95,6 +96,17 @@ router.patch(
     await profile.save();
     await User.findByIdAndUpdate(profile.userId, { status: "active" });
     await writeAudit(req.user._id, "seller.approved", "SellerProfile", profile._id);
+    await createNotification({
+      userId: profile.userId,
+      title: "Seller account approved",
+      messageType: "seller_account_approved",
+      message: "Your shop was approved. You can now add products, review EMI requests, and manage orders.",
+      category: "account",
+      severity: "success",
+      actionUrl: "/seller",
+      metadata: { sellerProfileId: profile._id },
+      dedupeKey: `seller-profile:${profile._id}:approved`
+    }).catch((error) => console.error("Unable to create seller approval notification", error));
     res.json(profile);
   })
 );
@@ -110,6 +122,17 @@ router.patch(
     await profile.save();
     await User.findByIdAndUpdate(profile.userId, { status: "rejected" });
     await writeAudit(req.user._id, "seller.rejected", "SellerProfile", profile._id, { reason: profile.rejectionReason });
+    await createNotification({
+      userId: profile.userId,
+      title: "Seller application declined",
+      messageType: "seller_account_rejected",
+      message: `Your shop application was declined: ${profile.rejectionReason}.`,
+      category: "account",
+      severity: "critical",
+      actionUrl: "/seller/pending",
+      metadata: { sellerProfileId: profile._id, reason: profile.rejectionReason },
+      dedupeKey: `seller-profile:${profile._id}:rejected`
+    }).catch((error) => console.error("Unable to create seller rejection notification", error));
     res.json(profile);
   })
 );
@@ -125,6 +148,17 @@ router.patch(
     await profile.save();
     await User.findByIdAndUpdate(profile.userId, { status: "pending_admin_approval" });
     await writeAudit(req.user._id, "seller.needs_info", "SellerProfile", profile._id, { reason: profile.rejectionReason });
+    await createNotification({
+      userId: profile.userId,
+      title: "Seller information required",
+      messageType: "seller_account_needs_information",
+      message: `Please update your shop information: ${profile.rejectionReason}.`,
+      category: "account",
+      severity: "warning",
+      actionUrl: "/account",
+      metadata: { sellerProfileId: profile._id, reason: profile.rejectionReason },
+      dedupeKey: `seller-profile:${profile._id}:needs-info:${profile.updatedAt?.getTime() || Date.now()}`
+    }).catch((error) => console.error("Unable to create seller information notification", error));
     res.json(profile);
   })
 );
@@ -165,6 +199,17 @@ router.patch(
     if (req.body.status) product.status = req.body.status;
     await product.save();
     await writeAudit(req.user._id, "product.moderated", "Product", product._id, req.body);
+    await createNotification({
+      userId: product.sellerId,
+      title: `Product ${product.approvalStatus}`,
+      messageType: `product_${product.approvalStatus}`,
+      message: `${product.name} was ${product.approvalStatus}${req.body.reason ? `: ${req.body.reason}` : "."}`,
+      category: "inventory",
+      severity: product.approvalStatus === "approved" ? "success" : product.approvalStatus === "rejected" ? "critical" : "info",
+      actionUrl: "/seller?tab=myProducts",
+      metadata: { productId: product._id, status: product.approvalStatus, reason: req.body.reason },
+      dedupeKey: `product:${product._id}:moderated:${product.approvalStatus}:${product.updatedAt?.getTime() || Date.now()}`
+    }).catch((error) => console.error("Unable to create product moderation notification", error));
     res.json(product);
   })
 );

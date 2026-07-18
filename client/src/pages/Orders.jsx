@@ -10,14 +10,6 @@ export default function Orders() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const orders = useQuery({ queryKey: ["orders"], queryFn: async () => (await api.get("/orders")).data });
-  const payOrder = useMutation({
-    mutationFn: async (id) => api.patch(`/orders/${id}/pay-mock`, { method: "mock_gateway" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-      notifySuccess("Mock order payment recorded.");
-    },
-    onError: (err) => notifyError(err, "Unable to record mock payment.")
-  });
   const stripePayOrder = useMutation({
     mutationFn: async (id) => api.post("/payments/stripe/create-order-checkout-session", { orderId: id }),
     onSuccess: ({ data }) => {
@@ -59,9 +51,8 @@ export default function Orders() {
                   <td className="table-action-cell">
                     <Link className="button tiny" to={`/orders/${order._id}`}>Details</Link>
                     {user?.role === "buyer" && order.paymentMode === "cash" && order.paymentStatus === "unpaid" && (
-                      <button className="button tiny" disabled={stripePayOrder.isPending} onClick={() => stripePayOrder.mutate(order._id)}>Pay with Stripe</button>
+                      <button className="button tiny" disabled={stripePayOrder.isPending} onClick={() => stripePayOrder.mutate(order._id)}>Pay</button>
                     )}
-                    {user?.role === "buyer" && order.paymentStatus === "unpaid" && <button className="button tiny ghost" onClick={() => payOrder.mutate(order._id)}>Mock pay</button>}
                     {order.fulfillmentStatus !== "cancelled" && order.fulfillmentStatus !== "delivered" && <button className="button tiny danger" onClick={() => cancelOrder.mutate(order._id)}>Cancel</button>}
                   </td>
                 </tr>
@@ -71,7 +62,6 @@ export default function Orders() {
           </table>
         </div>
         {stripePayOrder.isError && <p className="form-error">{stripePayOrder.error?.response?.data?.message || "Unable to start Stripe order payment"}</p>}
-        {payOrder.isError && <p className="form-error">{payOrder.error?.response?.data?.message || "Unable to record mock payment"}</p>}
       </section>
     </section>
   );

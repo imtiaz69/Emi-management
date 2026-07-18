@@ -7,6 +7,7 @@ const { assertUploadedFilesSafe, createUploader } = require("../middleware/uploa
 const { formBoolean, validateBody, z } = require("../middleware/validate");
 const { deleteUploadedFile, uploadFile } = require("../utils/cloudinary");
 const { writeAudit } = require("../services/auditService");
+const { notifyLowStockProduct } = require("../services/notificationService");
 
 const router = express.Router();
 const upload = createUploader("products");
@@ -71,11 +72,19 @@ router.get(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { q, category, sellerId, minPrice, maxPrice, sort } = req.query;
+    const { q, category, categories, sellerId, minPrice, maxPrice, sort, emiAvailable, inStock } = req.query;
     const filter = { status: "active" };
     if (sellerId) filter.sellerId = sellerId;
-    if (category) filter.category = category;
+    const categoryList = String(categories || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 40);
+    if (categoryList.length) filter.category = { $in: categoryList };
+    else if (category) filter.category = category;
     if (minPrice || maxPrice) filter.price = { ...(minPrice && { $gte: Number(minPrice) }), ...(maxPrice && { $lte: Number(maxPrice) }) };
+    if (emiAvailable === "true") filter.emiAvailable = true;
+    if (inStock === "true") filter.stock = { $gt: 0 };
     if (q) filter.$text = { $search: q };
     const sortMap = {
       price_asc: { price: 1 },
@@ -91,15 +100,23 @@ router.get(
 router.get(
   "/meta/filters",
   asyncHandler(async (_req, res) => {
-    const [categories, sellers] = await Promise.all([
-      Product.distinct("category", { status: "active" }),
+    const [categoryRows, sellers] = await Promise.all([
+      Product.aggregate([
+        { $match: { status: "active", category: { $nin: [null, ""] } } },
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+        { $sort: { _id: 1 } }
+      ]),
       Product.find({ status: "active" }).populate("sellerId", "name").select("sellerId").lean()
     ]);
     const sellerMap = new Map();
     sellers.forEach((row) => {
       if (row.sellerId?._id) sellerMap.set(row.sellerId._id.toString(), row.sellerId);
     });
-    res.json({ categories: categories.filter(Boolean).sort(), sellers: [...sellerMap.values()] });
+    res.json({
+      categories: categoryRows.map((row) => row._id),
+      categoryCounts: Object.fromEntries(categoryRows.map((row) => [row._id, row.count])),
+      sellers: [...sellerMap.values()]
+    });
   })
 );
 
@@ -152,6 +169,7 @@ router.post(
       images: productImages
     });
     await writeAudit(req.user._id, "product.created", "Product", product._id);
+    await notifyLowStockProduct(product).catch((error) => console.error("Unable to create stock notification", error));
     res.status(201).json(product);
   })
 );
@@ -199,6 +217,7 @@ router.patch(
     }
     await product.save();
     await writeAudit(req.user._id, "product.updated", "Product", product._id);
+    await notifyLowStockProduct(product).catch((error) => console.error("Unable to create stock notification", error));
     res.json(product);
   })
 );

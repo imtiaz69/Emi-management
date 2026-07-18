@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CreditCard, Mail, MapPin, Package, Phone, Search, ShieldCheck, ShoppingBag, Store } from "lucide-react";
+import { CreditCard, Mail, MapPin, Package, Phone, Search, ShieldCheck, ShoppingBag, Star, Store } from "lucide-react";
 import dayjs from "dayjs";
 import { api } from "../api/http";
 import StatCard from "../components/StatCard.jsx";
@@ -61,6 +61,7 @@ export default function SellerStoreProfile() {
           <p>Managed by {ownerName}. Browse verified products, EMI-ready listings, and direct seller contact information.</p>
           <div className="profile-meta-list">
             {profile.address && <span><MapPin size={15} /> {profile.address}</span>}
+            <span><Star size={15} /> {store.stats.averageRating || "New"} rating ({store.stats.reviewCount || 0} reviews)</span>
             {store.seller.phone && <span><Phone size={15} /> {store.seller.phone}</span>}
             {store.seller.email && <span><Mail size={15} /> {store.seller.email}</span>}
             <span><Package size={15} /> Joined {dayjs(store.seller.createdAt).format("MMM YYYY")}</span>
@@ -71,6 +72,7 @@ export default function SellerStoreProfile() {
       <div className="stats-grid">
         <StatCard label="Active products" value={store.stats.totalProducts} tone="green" />
         <StatCard label="EMI products" value={store.stats.emiProducts} tone="purple" />
+        <StatCard label="Seller rating" value={store.stats.reviewCount ? `${store.stats.averageRating} / 5` : "New"} tone="green" />
         <StatCard label="Available stock" value={store.stats.totalStock} />
         <StatCard label="Price range" value={`${formatBDT(store.stats.minPrice)} - ${formatBDT(store.stats.maxPrice)}`} tone="green" />
       </div>

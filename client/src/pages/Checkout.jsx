@@ -13,6 +13,15 @@ export default function Checkout() {
   const [couponCode, setCouponCode] = useState("");
   const [address, setAddress] = useState({ name: "", phone: "", line1: "", line2: "", city: "Sylhet", area: "", postalCode: "" });
   const [emiDrafts, setEmiDrafts] = useState({});
+  const addressLabels = {
+    name: "Full name",
+    phone: "Phone number",
+    line1: "Address line 1",
+    line2: "Address line 2",
+    city: "City",
+    area: "Area",
+    postalCode: "Postal code"
+  };
 
   const createOrder = useMutation({
     mutationFn: async () => api.post("/orders/from-cart", {
@@ -32,7 +41,7 @@ export default function Checkout() {
     }),
     onSuccess: ({ data }) => {
       clearCheckoutSelection();
-      notifySuccess("Order placed successfully.");
+      notifySuccess(hasEmi ? "EMI request submitted. The product will be prepared after seller approval and Stripe down payment." : "Order placed successfully.");
       navigate(`/orders/${data._id}`);
     },
     onError: (err) => notifyError(err, "Checkout failed")
@@ -78,7 +87,7 @@ export default function Checkout() {
           <h2>Shipping address</h2>
           <div className="form-grid">
             {Object.keys(address).map((key) => (
-              <label key={key}>{key.replace(/([A-Z])/g, " $1")}
+              <label key={key}>{addressLabels[key]}
                 <input value={address[key]} onChange={(e) => setAddress({ ...address, [key]: e.target.value })} />
               </label>
             ))}
@@ -143,7 +152,7 @@ export default function Checkout() {
       )}
 
       <button className="button" disabled={!checkoutItems.length || createOrder.isPending || !address.name || !address.phone || !address.line1} onClick={() => createOrder.mutate()}>
-        Place order
+        {hasEmi ? "Submit EMI request" : "Place order"}
       </button>
       {createOrder.isError && <p className="form-error">{createOrder.error?.response?.data?.message || "Checkout failed"}</p>}
     </section>

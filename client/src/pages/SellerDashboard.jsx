@@ -1,30 +1,97 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, CheckCircle2, Eye, Package, RefreshCcw, XCircle } from "lucide-react";
+import {
+  BadgeDollarSign,
+  BarChart3,
+  Bell,
+  Boxes,
+  CheckCircle2,
+  ClipboardCheck,
+  ArrowUpRight,
+  CalendarRange,
+  Download,
+  Eye,
+  FileBarChart,
+  FileSpreadsheet,
+  FileText,
+  HandCoins,
+  History,
+  LayoutDashboard,
+  PackagePlus,
+  ReceiptText,
+  RefreshCcw,
+  ShieldCheck,
+  ShoppingCart,
+  X,
+  XCircle
+} from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import dayjs from "dayjs";
 import { api, openProtectedFile } from "../api/http";
 import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
 import ProtectedImage from "../components/ProtectedImage.jsx";
+import DashboardShell from "../components/DashboardShell.jsx";
+import NotificationInbox from "../components/NotificationInbox.jsx";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { formatKycType } from "../utils/kyc.js";
-import { generateReceiptPdf } from "../utils/receipt.js";
 import { notifyError, notifyInfo, notifySuccess } from "../utils/toast.js";
 
 const tabs = [
-  { key: "overview", label: "Overview" },
-  { key: "onlineRequests", label: "Online EMI requests" },
-  { key: "createLoan", label: "Create offline loan" },
-  { key: "recordPayment", label: "Record payment" },
-  { key: "addProduct", label: "Add products" },
-  { key: "myProducts", label: "My products" },
-  { key: "orders", label: "Orders" },
-  { key: "activeLoans", label: "Active EMI loans" },
-  { key: "paymentHistory", label: "Payment history" },
-  { key: "reports", label: "Reports" },
-  { key: "kycRequests", label: "KYC requests" }
+  { key: "overview", label: "Overview", icon: LayoutDashboard, group: "Workspace" },
+  { key: "notifications", label: "Notifications", icon: Bell, group: "Workspace" },
+  { key: "onlineRequests", label: "Online EMI requests", icon: ClipboardCheck, group: "Lending" },
+  { key: "createLoan", label: "Create offline loan", icon: HandCoins, group: "Lending" },
+  { key: "recordPayment", label: "Record payment", icon: ReceiptText, group: "Lending" },
+  { key: "activeLoans", label: "Active EMI loans", icon: BadgeDollarSign, group: "Lending" },
+  { key: "kycRequests", label: "KYC requests", icon: ShieldCheck, group: "Lending" },
+  { key: "addProduct", label: "Add products", icon: PackagePlus, group: "Commerce" },
+  { key: "myProducts", label: "My products", icon: Boxes, group: "Commerce" },
+  { key: "orders", label: "Orders", icon: ShoppingCart, group: "Commerce" },
+  { key: "paymentHistory", label: "Payment history", icon: History, group: "Records" },
+  { key: "reports", label: "Reports", icon: FileBarChart, group: "Records" }
+];
+
+const sellerTabKeys = new Set(tabs.map((tab) => tab.key));
+
+function getInitialSellerTab(search) {
+  const tab = new URLSearchParams(search).get("tab");
+  return sellerTabKeys.has(tab) ? tab : "overview";
+}
+
+const overviewMetricMeta = {
+  total_sales: { title: "Total product sales", description: "Paid cash product value after discounts plus active EMI principal.", monetary: true },
+  cash_sales: { title: "Cash product sales", description: "Paid cash product value after discounts. Delivery charges are excluded.", monetary: true },
+  emi_sales: { title: "EMI product sales", description: "Product principal for active, closed, and defaulted EMI loans.", monetary: true },
+  total_collection: { title: "Total collected", description: "All confirmed cash receipts, EMI down payments, and installments.", monetary: true },
+  cash_collection: { title: "Cash order receipts", description: "Confirmed cash-order receipts, including allocated delivery charges.", monetary: true },
+  emi_collection: { title: "EMI collected", description: "Confirmed EMI down payments and installment payments.", monetary: true },
+  monthly_collection: { title: "Collected this month", description: "Confirmed seller collections recorded during the current month.", monetary: true },
+  delivery_collection: { title: "Delivery collected", description: "Delivery-charge portion included in confirmed cash receipts.", monetary: true },
+  down_payments: { title: "Down payments collected", description: "Confirmed down payments for active EMI agreements.", monetary: true },
+  installments: { title: "Installments collected", description: "Confirmed monthly and advance EMI installment payments.", monetary: true },
+  finance_charge: { title: "EMI finance charge", description: "Expected interest above product principal across recognized EMI contracts.", monetary: true },
+  late_fees: { title: "Late fees assessed", description: "All late fees added to EMI schedules, whether collected or outstanding.", monetary: true },
+  total_due: { title: "EMI outstanding", description: "All unpaid future and overdue EMI schedule balances.", monetary: true },
+  upcoming_due: { title: "Upcoming EMI", description: "Unpaid EMI balances whose due dates have not passed.", monetary: true },
+  overdue: { title: "Overdue EMI", description: "Unpaid EMI balances whose due dates have passed.", monetary: true },
+  active_loans: { title: "Active EMI loans", description: "Loans currently collecting monthly installments.", monetary: false },
+  paid_cash_orders: { title: "Paid cash orders", description: "Cash orders with confirmed full payment.", monetary: false },
+  unpaid_cash_orders: { title: "Awaiting cash payment", description: "Unpaid cash checkouts. These are not counted as sales or due.", monetary: true },
+  pending_requests: { title: "Pending EMI requests", description: "EMI applications waiting for seller review.", monetary: false },
+  awaiting_down_payments: { title: "Awaiting down payment", description: "Approved EMI applications waiting for confirmed down payment.", monetary: false },
+  ready_delivery: { title: "Ready for delivery", description: "Paid cash or activated EMI orders ready for seller fulfillment.", monetary: false },
+  low_stock: { title: "Low-stock products", description: "Active products at or below their configured alert threshold.", monetary: false }
+};
+
+const reportTypeOptions = [
+  { value: "sales", label: "Sales performance" },
+  { value: "collections", label: "Collections" },
+  { value: "overdue", label: "Overdue and risk" },
+  { value: "orders", label: "Orders and fulfillment" },
+  { value: "emi-portfolio", label: "EMI portfolio" },
+  { value: "down-payments", label: "EMI down payments" }
 ];
 
 function SearchableSelect({ label, value, onChange, options, placeholder, searchPlaceholder, getOptionLabel, getOptionValue, onValueChange }) {
@@ -105,8 +172,9 @@ function ColorInputs({ colors, onChange }) {
 }
 
 export default function SellerDashboard() {
+  const location = useLocation();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => getInitialSellerTab(location.search));
   const [productForm, setProductForm] = useState({
     name: "",
     category: "Mobile",
@@ -129,10 +197,23 @@ export default function SellerDashboard() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [editingProductImages, setEditingProductImages] = useState([]);
   const [editingReplaceImages, setEditingReplaceImages] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(getInitialSellerTab(location.search));
+  }, [location.search]);
   const [editingStockAddition, setEditingStockAddition] = useState({ quantity: "", note: "" });
   const [stockAdjustment, setStockAdjustment] = useState({ productId: "", quantity: "", note: "" });
+  const [overviewMetric, setOverviewMetric] = useState("");
+  const [reportType, setReportType] = useState("sales");
+  const [reportDates, setReportDates] = useState({ from: "", to: "" });
+  const [reportExporting, setReportExporting] = useState("");
 
   const summary = useQuery({ queryKey: ["summary"], queryFn: async () => (await api.get("/reports/summary")).data });
+  const overviewDetails = useQuery({
+    queryKey: ["overview-detail", overviewMetric],
+    queryFn: async () => (await api.get("/reports/summary/details", { params: { metric: overviewMetric } })).data,
+    enabled: Boolean(overviewMetric)
+  });
   const products = useQuery({ queryKey: ["seller-products"], queryFn: async () => (await api.get("/products/mine")).data });
   const loans = useQuery({ queryKey: ["loans"], queryFn: async () => (await api.get("/loans")).data });
   const payments = useQuery({ queryKey: ["payments"], queryFn: async () => (await api.get("/payments")).data });
@@ -141,16 +222,33 @@ export default function SellerDashboard() {
   const applications = useQuery({ queryKey: ["emi-applications"], queryFn: async () => (await api.get("/emi-applications")).data });
   const overdue = useQuery({ queryKey: ["overdue"], queryFn: async () => (await api.get("/reports/overdue")).data });
   const collections = useQuery({ queryKey: ["collections"], queryFn: async () => (await api.get("/reports/collections")).data });
-  const orders = useQuery({ queryKey: ["seller-orders"], queryFn: async () => (await api.get("/orders")).data });
-  const salesReport = useQuery({ queryKey: ["report-sales"], queryFn: async () => (await api.get("/reports/sales")).data });
-  const portfolioReport = useQuery({ queryKey: ["report-portfolio"], queryFn: async () => (await api.get("/reports/emi-portfolio")).data });
-  const orderReport = useQuery({ queryKey: ["report-orders"], queryFn: async () => (await api.get("/reports/orders")).data });
-  const downPaymentReport = useQuery({ queryKey: ["report-down-payments"], queryFn: async () => (await api.get("/reports/down-payments")).data });
-  const paymentMethods = useQuery({ queryKey: ["report-payment-methods"], queryFn: async () => (await api.get("/reports/payment-methods")).data });
+  const orders = useQuery({
+    queryKey: ["seller-orders"],
+    queryFn: async () => (await api.get("/orders")).data,
+    refetchInterval: 10000
+  });
+  const reportRangeInvalid = Boolean(reportDates.from && reportDates.to && dayjs(reportDates.from).isAfter(dayjs(reportDates.to)));
+  const reportParams = {
+    type: reportType,
+    ...(reportDates.from && { from: reportDates.from }),
+    ...(reportDates.to && { to: reportDates.to })
+  };
+  const reportPreview = useQuery({
+    queryKey: ["report-preview", reportType, reportDates.from, reportDates.to],
+    queryFn: async () => (await api.get("/reports/preview", { params: reportParams })).data,
+    enabled: activeTab === "reports" && !reportRangeInvalid
+  });
+  const paymentMethods = useQuery({
+    queryKey: ["report-payment-methods", reportDates.from, reportDates.to],
+    queryFn: async () => (await api.get("/reports/payment-methods", { params: reportParams })).data,
+    enabled: activeTab === "reports" && !reportRangeInvalid
+  });
 
   const activeLoans = (loans.data || []).filter((loan) => loan.status === "active");
+  const approvedLoans = (loans.data || []).filter((loan) => loan.status === "approved");
   const activeProducts = useMemo(() => (products.data || []).filter((product) => product.status === "active"), [products.data]);
   const requestedLoans = (loans.data || []).filter((loan) => loan.status === "requested");
+  const reviewLoans = [...requestedLoans, ...approvedLoans];
   const requestedCount = requestedLoans.length;
   const applicationByLoanId = useMemo(() => {
     const map = new Map();
@@ -161,9 +259,9 @@ export default function SellerDashboard() {
     return map;
   }, [applications.data]);
   const overviewChartData = [
-    { label: "Sales", amount: summary.data?.totalSales || 0 },
-    { label: "Collection", amount: summary.data?.totalCollection || 0 },
-    { label: "Due", amount: summary.data?.totalDue || summary.data?.dueAmount || 0 }
+    { label: "Product sales", amount: summary.data?.totalSales || 0, metric: "total_sales" },
+    { label: "Collected", amount: summary.data?.totalCollection || 0, metric: "total_collection" },
+    { label: "EMI outstanding", amount: summary.data?.totalDue || summary.data?.dueAmount || 0, metric: "total_due" }
   ];
   const productImagePreviews = useMemo(() => productImages.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })), [productImages]);
   const editingProductImagePreviews = useMemo(() => editingProductImages.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })), [editingProductImages]);
@@ -174,6 +272,15 @@ export default function SellerDashboard() {
     });
     return map;
   }, [pendingKyc.data]);
+
+  useEffect(() => {
+    if (!overviewMetric) return undefined;
+    function closeOnEscape(event) {
+      if (event.key === "Escape") setOverviewMetric("");
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [overviewMetric]);
 
   const createProduct = useMutation({
     mutationFn: async () => {
@@ -338,7 +445,7 @@ export default function SellerDashboard() {
     mutationFn: async (loanId) => api.patch(`/loans/${loanId}/approve`),
     onSuccess: () => {
       refreshData();
-      notifySuccess("Online EMI request approved and EMI schedule generated.");
+      notifySuccess("EMI request approved. Delivery and the monthly schedule will start after the Stripe down payment is confirmed.");
     },
     onError: (err) => {
       notifyError(err, "Failed to approve EMI request.");
@@ -382,7 +489,9 @@ export default function SellerDashboard() {
       queryClient.invalidateQueries({ queryKey: ["report-portfolio"] }),
       queryClient.invalidateQueries({ queryKey: ["report-orders"] }),
       queryClient.invalidateQueries({ queryKey: ["report-down-payments"] }),
-      queryClient.invalidateQueries({ queryKey: ["report-payment-methods"] })
+      queryClient.invalidateQueries({ queryKey: ["report-payment-methods"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-preview"] }),
+      queryClient.invalidateQueries({ queryKey: ["overview-detail"] })
     ]);
   }
 
@@ -423,41 +532,87 @@ export default function SellerDashboard() {
     return `BDT ${Math.round(Number(value || 0)).toLocaleString("en-BD")}`;
   }
 
+  function formatPaymentType(type) {
+    if (type === "order_payment") return "Cash order";
+    if (type === "down_payment") return "Down payment";
+    if (type === "installment") return "EMI installment";
+    return String(type || "Payment").replaceAll("_", " ");
+  }
+
   function buyerProfilePath(buyer) {
     const id = buyer?._id || buyer;
     return id ? `/buyers/${id}` : "";
   }
 
+  function isOrderReadyForFulfillment(order) {
+    return (order.items || []).every((item) => {
+      if (item.financeMode === "emi") return ["active", "closed"].includes(item.loanId?.status);
+      return order.paymentStatus === "paid";
+    });
+  }
+
+  function getDeliveryState(order) {
+    if (["delivered", "cancelled", "returned"].includes(order.fulfillmentStatus)) return order.fulfillmentStatus;
+    return isOrderReadyForFulfillment(order) ? "ready" : "waiting_payment";
+  }
+
+  function setReportPeriod(period) {
+    if (period === "month") {
+      setReportDates({
+        from: dayjs().startOf("month").format("YYYY-MM-DD"),
+        to: dayjs().format("YYYY-MM-DD")
+      });
+      return;
+    }
+    if (period === "year") {
+      setReportDates({
+        from: dayjs().startOf("year").format("YYYY-MM-DD"),
+        to: dayjs().format("YYYY-MM-DD")
+      });
+      return;
+    }
+    setReportDates({ from: "", to: "" });
+  }
+
+  async function exportReport(format) {
+    if (reportRangeInvalid) {
+      notifyInfo("The report start date must be before the end date.");
+      return;
+    }
+    setReportExporting(format);
+    try {
+      const params = new URLSearchParams({ ...reportParams, format });
+      await openProtectedFile(`/reports/export?${params.toString()}`);
+      notifySuccess(`${format === "pdf" ? "PDF" : "Excel"} report generated.`);
+    } catch (error) {
+      notifyError(error, "Unable to generate the report.");
+    } finally {
+      setReportExporting("");
+    }
+  }
+
+  function formatReportCell(value, format) {
+    if (format === "money") return formatBDT(value);
+    if (format === "date") return value ? dayjs(value).format("DD MMM YYYY") : "—";
+    if (format === "months") return `${Number(value || 0)} months`;
+    return String(value ?? "—").replaceAll("_", " ");
+  }
+
+  function reportOverviewValue(value) {
+    if (summary.isLoading) return "Loading...";
+    if (summary.isError) return "Unavailable";
+    return formatBDT(value);
+  }
+
   return (
-    <section className="seller-dashboard">
-      <div className="seller-header">
-        <div>
-          <h1>Seller Dashboard</h1>
-          <p>Use the left sidebar to switch between overview, offline loan creation, payments, and product management pages.</p>
-        </div>
-      </div>
-
-      <div className="seller-dashboard-layout">
-        <aside className="seller-sidebar">
-          <div className="sidebar-brand">
-            <Package size={20} />
-            <span>Seller Hub</span>
-          </div>
-
-          <nav className="sidebar-nav">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                className={`sidebar-link ${activeTab === tab.key ? "active" : ""}`}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </aside>
-
-        <main className="seller-content">
+    <DashboardShell
+      title={tabs.find((tab) => tab.key === activeTab)?.label || "Seller Dashboard"}
+      description="Manage lending, products, orders, collections, KYC, and reports."
+      roleLabel="Seller Workspace"
+      tabs={tabs}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+    >
           {activeTab === "overview" && (
             <>
               <div className="page-title">
@@ -469,18 +624,65 @@ export default function SellerDashboard() {
               </div>
 
               <div className="stats-grid">
-                <StatCard label="Total sales" value={formatBDT(summary.data?.totalSales)} tone="green" />
-                <StatCard label="Total collection" value={formatBDT(summary.data?.totalCollection)} tone="purple" />
-                <StatCard label="Total due" value={formatBDT(summary.data?.totalDue)} tone="red" />
-                <StatCard label="Cash sales" value={formatBDT(summary.data?.cashSales)} tone="green" />
-                <StatCard label="EMI sales" value={formatBDT(summary.data?.emiSales)} tone="purple" />
-                <StatCard label="Overdue amount" value={formatBDT(summary.data?.overdueAmount ?? summary.data?.totalOverdueAmount)} tone="red" />
-                <StatCard label="Paid orders" value={summary.data?.paidOrderCount ?? 0} />
-                <StatCard label="Unpaid orders" value={summary.data?.unpaidOrderCount ?? 0} tone="red" />
+                <StatCard
+                  label="Total product sales"
+                  value={formatBDT(summary.data?.totalSales)}
+                  caption="Cash after discount + EMI principal"
+                  tone="green"
+                  onClick={() => setOverviewMetric("total_sales")}
+                />
+                <StatCard
+                  label="Total collected"
+                  value={formatBDT(summary.data?.totalCollection)}
+                  caption="All confirmed receipts"
+                  tone="purple"
+                  onClick={() => setOverviewMetric("total_collection")}
+                />
+                <StatCard
+                  label="EMI outstanding"
+                  value={formatBDT(summary.data?.totalDue)}
+                  caption="Upcoming + overdue schedules"
+                  tone="red"
+                  onClick={() => setOverviewMetric("total_due")}
+                />
+                <StatCard
+                  label="Overdue EMI"
+                  value={formatBDT(summary.data?.overdueAmount ?? summary.data?.totalOverdueAmount)}
+                  caption={`${summary.data?.overdueCount ?? 0} overdue installment(s)`}
+                  tone="red"
+                  onClick={() => setOverviewMetric("overdue")}
+                />
+                <StatCard
+                  label="Cash product sales"
+                  value={formatBDT(summary.data?.cashSales)}
+                  caption="Delivery excluded"
+                  tone="green"
+                  onClick={() => setOverviewMetric("cash_sales")}
+                />
+                <StatCard
+                  label="EMI product sales"
+                  value={formatBDT(summary.data?.emiSales)}
+                  caption="Activated product principal"
+                  tone="purple"
+                  onClick={() => setOverviewMetric("emi_sales")}
+                />
+                <StatCard
+                  label="Paid cash orders"
+                  value={summary.data?.paidCashOrderCount ?? summary.data?.paidOrderCount ?? 0}
+                  caption="Full payment confirmed"
+                  onClick={() => setOverviewMetric("paid_cash_orders")}
+                />
+                <StatCard
+                  label="Awaiting cash payment"
+                  value={summary.data?.unpaidCashOrderCount ?? summary.data?.unpaidOrderCount ?? 0}
+                  caption={`${formatBDT(summary.data?.unpaidCashOrderValue)} pending, not due`}
+                  tone="red"
+                  onClick={() => setOverviewMetric("unpaid_cash_orders")}
+                />
               </div>
 
               <section className="panel">
-                <h2><BarChart3 size={18} /> Sales, collection, and due</h2>
+                <h2><BarChart3 size={18} /> Sales, received, and outstanding</h2>
                 <div className="chart-box">
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={overviewChartData}>
@@ -488,31 +690,71 @@ export default function SellerDashboard() {
                       <XAxis dataKey="label" />
                       <YAxis />
                       <Tooltip formatter={(value) => formatBDT(value)} />
-                      <Bar dataKey="amount" fill="#247a78" radius={[5, 5, 0, 0]} />
+                      <Bar
+                        dataKey="amount"
+                        fill="#2ca58d"
+                        radius={[5, 5, 0, 0]}
+                        cursor="pointer"
+                        onClick={(entry) => setOverviewMetric(entry?.metric || entry?.payload?.metric || "")}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </section>
 
               <section className="panel">
+                <div className="section-heading-row">
+                  <div>
+                    <h2>Accounting reconciliation</h2>
+                    <p className="hint">Received plus outstanding should equal recognized product sales, finance charges, delivery receipts, and outstanding late fees.</p>
+                  </div>
+                  <StatusBadge status={Math.abs(Number(summary.data?.accountingDifference || 0)) < 0.01 ? "balanced" : "review"} />
+                </div>
+                <div className="accounting-equation">
+                  <div className="accounting-equation-side">
+                    <button type="button" onClick={() => setOverviewMetric("total_collection")}><span>Total collected</span><strong>{formatBDT(summary.data?.totalCollection)}</strong></button>
+                    <span className="accounting-operator">+</span>
+                    <button type="button" onClick={() => setOverviewMetric("total_due")}><span>EMI outstanding</span><strong>{formatBDT(summary.data?.totalDue)}</strong></button>
+                  </div>
+                  <span className="accounting-equals">=</span>
+                  <div className="accounting-equation-side accounting-equation-side-wide">
+                    <button type="button" onClick={() => setOverviewMetric("total_sales")}><span>Product sales</span><strong>{formatBDT(summary.data?.totalSales)}</strong></button>
+                    <span className="accounting-operator">+</span>
+                    <button type="button" onClick={() => setOverviewMetric("finance_charge")}><span>Finance charge</span><strong>{formatBDT(summary.data?.emiFinanceCharge)}</strong></button>
+                    <span className="accounting-operator">+</span>
+                    <button type="button" onClick={() => setOverviewMetric("delivery_collection")}><span>Delivery</span><strong>{formatBDT(summary.data?.deliveryCollection)}</strong></button>
+                    <span className="accounting-operator">+</span>
+                    <button type="button" onClick={() => setOverviewMetric("late_fees")}><span>Late fees</span><strong>{formatBDT(summary.data?.lateFeesAssessed)}</strong></button>
+                  </div>
+                </div>
+                {Math.abs(Number(summary.data?.accountingDifference || 0)) >= 0.01 && (
+                  <p className="form-error">Accounting difference: {formatBDT(summary.data?.accountingDifference)}. Open the related figures to inspect the source records.</p>
+                )}
+              </section>
+
+              <section className="panel">
                 <h2>Business snapshot</h2>
                 <div className="stats-grid">
-                  <StatCard label="Cash collection" value={formatBDT(summary.data?.cashCollection)} tone="green" />
-                  <StatCard label="EMI collection" value={formatBDT(summary.data?.emiCollection)} tone="purple" />
-                  <StatCard label="Cash due" value={formatBDT(summary.data?.cashDue)} tone="red" />
-                  <StatCard label="EMI due" value={formatBDT(summary.data?.emiDue ?? summary.data?.dueAmount)} tone="red" />
-                  <StatCard label="Active loans" value={summary.data?.activeLoanCount ?? activeLoans.length} tone="green" />
-                  <StatCard label="Pending EMI requests" value={summary.data?.requestedLoansCount ?? requestedCount} />
-                  <StatCard label="Overdue cases" value={summary.data?.overdueCount ?? overdue.data?.length ?? 0} tone="red" />
-                  <StatCard label="Low-stock products" value={(summary.data?.lowStockProducts || []).length} />
+                  <StatCard label="Cash order receipts" value={formatBDT(summary.data?.cashCollection)} caption="Includes delivery received" tone="green" onClick={() => setOverviewMetric("cash_collection")} />
+                  <StatCard label="Delivery collected" value={formatBDT(summary.data?.deliveryCollection)} caption="Part of cash receipts" onClick={() => setOverviewMetric("delivery_collection")} />
+                  <StatCard label="EMI collected" value={formatBDT(summary.data?.emiCollection)} caption="Down payments + installments" tone="purple" onClick={() => setOverviewMetric("emi_collection")} />
+                  <StatCard label="Down payments" value={formatBDT(summary.data?.downPaymentCollection)} caption="Confirmed activation payments" tone="purple" onClick={() => setOverviewMetric("down_payments")} />
+                  <StatCard label="Installments collected" value={formatBDT(summary.data?.installmentCollection)} caption="Monthly and advance payments" tone="green" onClick={() => setOverviewMetric("installments")} />
+                  <StatCard label="Collected this month" value={formatBDT(summary.data?.monthlyCollection)} caption="Confirmed current-month receipts" tone="green" onClick={() => setOverviewMetric("monthly_collection")} />
+                  <StatCard label="Upcoming EMI" value={formatBDT(summary.data?.upcomingDue)} caption="Not overdue yet" tone="red" onClick={() => setOverviewMetric("upcoming_due")} />
+                  <StatCard label="Active loans" value={summary.data?.activeLoanCount ?? activeLoans.length} caption="Currently collecting EMI" tone="green" onClick={() => setOverviewMetric("active_loans")} />
+                  <StatCard label="Pending EMI requests" value={summary.data?.requestedLoansCount ?? requestedCount} caption="Waiting for review" onClick={() => setOverviewMetric("pending_requests")} />
+                  <StatCard label="Awaiting down payments" value={summary.data?.awaitingDownPaymentCount ?? approvedLoans.length} caption="Approved, not activated" tone="purple" onClick={() => setOverviewMetric("awaiting_down_payments")} />
+                  <StatCard label="Ready for delivery" value={summary.data?.readyDeliveryCount ?? 0} caption="Payment condition satisfied" tone="green" onClick={() => setOverviewMetric("ready_delivery")} />
+                  <StatCard label="Low-stock products" value={(summary.data?.lowStockProducts || []).length} caption="At or below alert level" onClick={() => setOverviewMetric("low_stock")} />
                 </div>
                 {(summary.data?.lowStockProducts || []).length > 0 && (
                   <div className="list-stack">
                     {(summary.data?.lowStockProducts || []).slice(0, 5).map((product) => (
-                      <div className="list-row" key={product._id}>
+                      <button type="button" className="list-row overview-list-link" key={product._id} onClick={() => setOverviewMetric("low_stock")}>
                         <div><strong>{product.name}</strong><span>Stock {product.stock} | Alert at {product.lowStockThreshold}</span></div>
                         <span className="badge overdue">Low stock</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -575,7 +817,7 @@ export default function SellerDashboard() {
               <div className="page-title">
                 <div>
                   <h2>Online EMI requests</h2>
-                  <p>Review marketplace EMI applications, confirm buyer KYC status, then approve or reject the request.</p>
+                  <p>Review EMI applications, approve eligible buyers, and monitor approved requests waiting for their Stripe down payment.</p>
                 </div>
                 <button className="button secondary" onClick={refreshData}><RefreshCcw size={16} /> Refresh</button>
               </div>
@@ -595,10 +837,10 @@ export default function SellerDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {requestedLoans.length === 0 ? (
+                    {reviewLoans.length === 0 ? (
                       <tr><td colSpan="8" style={{ textAlign: "center", color: "#888" }}>No online EMI requests pending.</td></tr>
                     ) : (
-                      requestedLoans.map((loan) => {
+                      reviewLoans.map((loan) => {
                         const kycDoc = kycByBuyerId.get(loan.buyerId?._id);
                         const application = applicationByLoanId.get(loan._id);
                         return (
@@ -627,20 +869,26 @@ export default function SellerDashboard() {
                             </td>
                             <td className="table-action-cell">
                               {buyerProfilePath(loan.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(loan.buyerId)}>Buyer</Link>}
-                              <button
-                                className="button tiny"
-                                onClick={() => approveOnlineRequest.mutate(loan._id)}
-                                disabled={approveOnlineRequest.isPending || rejectOnlineRequest.isPending}
-                              >
-                                <CheckCircle2 size={14} /> Approve
-                              </button>
-                              <button
-                                className="button tiny danger"
-                                onClick={() => rejectOnlineRequest.mutate({ loanId: loan._id, reason: "Rejected by seller" })}
-                                disabled={approveOnlineRequest.isPending || rejectOnlineRequest.isPending}
-                              >
-                                <XCircle size={14} /> Reject
-                              </button>
+                              {loan.status === "requested" ? (
+                                <>
+                                  <button
+                                    className="button tiny"
+                                    onClick={() => approveOnlineRequest.mutate(loan._id)}
+                                    disabled={approveOnlineRequest.isPending || rejectOnlineRequest.isPending}
+                                  >
+                                    <CheckCircle2 size={14} /> Approve
+                                  </button>
+                                  <button
+                                    className="button tiny danger"
+                                    onClick={() => rejectOnlineRequest.mutate({ loanId: loan._id, reason: "Rejected by seller" })}
+                                    disabled={approveOnlineRequest.isPending || rejectOnlineRequest.isPending}
+                                  >
+                                    <XCircle size={14} /> Reject
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="badge pending">Awaiting Stripe down payment</span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -935,7 +1183,7 @@ export default function SellerDashboard() {
               </div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Order</th><th>Buyer</th><th>Total</th><th>Payment</th><th>Fulfillment</th><th>Address</th><th>Linked EMI</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Order</th><th>Buyer</th><th>Seller total</th><th>Payment</th><th>Delivery state</th><th>Address</th><th>Linked EMI</th><th>Actions</th></tr></thead>
                   <tbody>
                     {(orders.data || []).length === 0 ? (
                       <tr><td colSpan="8" style={{ textAlign: "center", color: "#888" }}>No seller orders yet.</td></tr>
@@ -952,15 +1200,30 @@ export default function SellerDashboard() {
                           </td>
                           <td>{formatBDT(order.total)}</td>
                           <td><StatusBadge status={order.paymentStatus} /></td>
-                          <td><StatusBadge status={order.fulfillmentStatus} /></td>
+                          <td>
+                            {getDeliveryState(order) === "ready" ? (
+                              <span className="badge active">Ready for delivery</span>
+                            ) : getDeliveryState(order) === "waiting_payment" ? (
+                              <span className="badge pending">Waiting for down payment</span>
+                            ) : (
+                              <StatusBadge status={getDeliveryState(order)} />
+                            )}
+                          </td>
                           <td>{order.shippingAddress?.line1}, {order.shippingAddress?.city}</td>
                           <td>{(order.items || []).some((item) => item.loanId) ? "Yes" : "No"}</td>
                           <td className="table-action-cell">
                             <Link className="button tiny" to={`/orders/${order._id}`}>Details</Link>
                             {buyerProfilePath(order.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(order.buyerId)}>Buyer</Link>}
-                            <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "confirmed" })}>Confirm</button>
-                            <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "shipped" })}>Ship</button>
-                            <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "delivered" })}>Deliver</button>
+                            {order.fulfillmentStatus === "pending" && (
+                              <button className="button tiny" disabled={!isOrderReadyForFulfillment(order)} onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "confirmed" })}>Confirm</button>
+                            )}
+                            {["confirmed", "processing"].includes(order.fulfillmentStatus) && isOrderReadyForFulfillment(order) && (
+                              <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "shipped" })}>Ship</button>
+                            )}
+                            {order.fulfillmentStatus === "shipped" && isOrderReadyForFulfillment(order) && (
+                              <button className="button tiny" onClick={() => updateOrderStatus.mutate({ orderId: order._id, fulfillmentStatus: "delivered" })}>Deliver</button>
+                            )}
+                            {!isOrderReadyForFulfillment(order) && <small className="table-subtext">Waiting for payment</small>}
                           </td>
                         </tr>
                       ))
@@ -1096,10 +1359,10 @@ export default function SellerDashboard() {
 
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Receipt</th><th>Buyer</th><th>Reference</th><th>Amount</th><th>Date</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Receipt</th><th>Buyer</th><th>Type</th><th>Method</th><th>Reference</th><th>Amount</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>
                     {(payments.data || []).length === 0 ? (
-                      <tr><td colSpan="6" style={{ textAlign: "center", color: "#888" }}>No payment history found</td></tr>
+                      <tr><td colSpan="9" style={{ textAlign: "center", color: "#888" }}>No confirmed payment history found</td></tr>
                     ) : (
                       (payments.data || []).map((payment) => (
                         <tr key={payment._id}>
@@ -1111,11 +1374,14 @@ export default function SellerDashboard() {
                               payment.buyerId?.name || payment.buyerId?.email
                             )}
                           </td>
+                          <td>{formatPaymentType(payment.transactionType)}</td>
+                          <td>{String(payment.method || "—").replaceAll("_", " ")}</td>
                           <td>{payment.loanId?._id || payment.loanId || payment.orderId?.orderNo || payment.orderId || "—"}</td>
                           <td>BDT {payment.amount}</td>
                           <td>{dayjs(payment.paymentDate).format("DD MMM YYYY")}</td>
+                          <td><StatusBadge status={payment.status} /></td>
                           <td className="table-action-cell">
-                            <button className="button tiny" onClick={() => generateReceiptPdf(payment)}>Download</button>
+                            <button className="button tiny" onClick={() => openProtectedFile(`/payments/${payment._id}/receipt`)}>Download PDF</button>
                             {buyerProfilePath(payment.buyerId) && <Link className="button tiny secondary" to={buyerProfilePath(payment.buyerId)}>Buyer</Link>}
                           </td>
                         </tr>
@@ -1128,50 +1394,261 @@ export default function SellerDashboard() {
           )}
 
           {activeTab === "reports" && (
-            <section className="panel">
+            <section className="reports-page">
               <div className="page-title">
                 <div>
                   <h2>Seller reports</h2>
-                  <p>Sales, EMI portfolio, order fulfillment, down payments, and payment method split.</p>
+                  <p>Business performance, collection, portfolio, fulfillment, and risk records.</p>
                 </div>
+                <button className="button secondary" onClick={refreshData}><RefreshCcw size={16} /> Refresh reports</button>
               </div>
               <div className="stats-grid">
-                <StatCard label="Sales principal" value={formatBDT(salesReport.data?.totals?.principal)} tone="green" />
-                <StatCard label="Portfolio outstanding" value={formatBDT(portfolioReport.data?.totals?.outstanding)} tone="red" />
-                <StatCard label="Order total" value={formatBDT(orderReport.data?.totals?.orderTotal)} tone="purple" />
-                <StatCard label="Down payments" value={formatBDT(downPaymentReport.data?.totals?.amount)} />
+                <StatCard label="Recognized sales" value={reportOverviewValue(summary.data?.totalSales)} caption="Cash product value + EMI principal" tone="green" />
+                <StatCard label="Confirmed collections" value={reportOverviewValue(summary.data?.totalCollection)} caption="Cash, down payments, and installments" tone="purple" />
+                <StatCard label="EMI outstanding" value={reportOverviewValue(summary.data?.totalDue)} caption="Open schedule balances" />
+                <StatCard label="Overdue exposure" value={reportOverviewValue(summary.data?.overdueAmount)} caption={summary.isLoading ? "Loading overdue records" : `${summary.data?.overdueCount || 0} overdue installments`} tone="red" />
               </div>
-              <div className="button-row">
-                <button className="button tiny" onClick={() => openProtectedFile("/reports/export?type=sales&format=excel")}>Sales Excel</button>
-                <button className="button tiny ghost" onClick={() => openProtectedFile("/reports/export?type=orders&format=excel")}>Orders Excel</button>
-                <button className="button tiny ghost" onClick={() => openProtectedFile("/reports/export?type=emi-portfolio&format=pdf")}>Portfolio PDF</button>
-                <button className="button tiny ghost" onClick={() => openProtectedFile("/reports/export?type=down-payments&format=excel")}>Down payment Excel</button>
-              </div>
-              <div className="work-grid">
-                <section>
-                  <h3>Payment method split</h3>
+
+              <section className="panel report-builder">
+                <div className="section-heading-row">
+                  <div>
+                    <h3><FileBarChart size={18} /> Report builder</h3>
+                    <p>{reportPreview.data?.description || "Select a report and reporting period."}</p>
+                  </div>
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={Boolean(reportExporting) || reportRangeInvalid}
+                      onClick={() => exportReport("excel")}
+                    >
+                      <FileSpreadsheet size={16} /> {reportExporting === "excel" ? "Generating..." : "Excel"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={Boolean(reportExporting) || reportRangeInvalid}
+                      onClick={() => exportReport("pdf")}
+                    >
+                      <FileText size={16} /> {reportExporting === "pdf" ? "Generating..." : "PDF"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="report-controls">
+                  <label>Report type
+                    <select value={reportType} onChange={(event) => setReportType(event.target.value)}>
+                      {reportTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <label>From date
+                    <input type="date" value={reportDates.from} onChange={(event) => setReportDates({ ...reportDates, from: event.target.value })} />
+                  </label>
+                  <label>To date
+                    <input type="date" value={reportDates.to} onChange={(event) => setReportDates({ ...reportDates, to: event.target.value })} />
+                  </label>
+                  <div className="report-period-control">
+                    <span>Period</span>
+                    <div className="segmented report-period-options">
+                      <button type="button" className={!reportDates.from && !reportDates.to ? "active" : ""} onClick={() => setReportPeriod("all")}>All time</button>
+                      <button
+                        type="button"
+                        className={reportDates.from === dayjs().startOf("month").format("YYYY-MM-DD") && reportDates.to === dayjs().format("YYYY-MM-DD") ? "active" : ""}
+                        onClick={() => setReportPeriod("month")}
+                      >
+                        This month
+                      </button>
+                      <button
+                        type="button"
+                        className={reportDates.from === dayjs().startOf("year").format("YYYY-MM-DD") && reportDates.to === dayjs().format("YYYY-MM-DD") ? "active" : ""}
+                        onClick={() => setReportPeriod("year")}
+                      >
+                        This year
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {reportRangeInvalid && <div className="notice warning">The start date must be before or equal to the end date.</div>}
+
+                {!reportRangeInvalid && (
+                  <div className="report-summary-strip">
+                    {(reportPreview.data?.summaries || []).map((item) => (
+                      <div key={item.label}>
+                        <span>{item.label}</span>
+                        <strong>{item.money ? formatBDT(item.value) : Number(item.value || 0).toLocaleString("en-BD")}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="report-preview-heading">
+                  <div>
+                    <h3>{reportPreview.data?.title || "Report preview"}</h3>
+                    <span>
+                      <CalendarRange size={15} />
+                      {reportDates.from || reportDates.to
+                        ? `${reportDates.from ? dayjs(reportDates.from).format("DD MMM YYYY") : "Beginning"} to ${reportDates.to ? dayjs(reportDates.to).format("DD MMM YYYY") : "Today"}`
+                        : "All available records"}
+                    </span>
+                  </div>
+                  <span>{reportPreview.data?.count || 0} records</span>
+                </div>
+
+                {reportPreview.isLoading ? (
+                  <div className="report-empty-state">Preparing report preview...</div>
+                ) : reportPreview.isError ? (
+                  <div className="error">{reportPreview.error?.response?.data?.message || "Unable to load report preview."}</div>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="report-preview-table">
+                      <thead>
+                        <tr>{(reportPreview.data?.columns || []).map((column) => <th key={column.key}>{column.label}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {(reportPreview.data?.rows || []).length === 0 ? (
+                          <tr><td className="report-table-empty" colSpan={Math.max(reportPreview.data?.columns?.length || 1, 1)}>No records match this reporting period.</td></tr>
+                        ) : (
+                          (reportPreview.data?.rows || []).slice(0, 50).map((row, rowIndex) => (
+                            <tr key={row.id || `${reportType}-${rowIndex}`}>
+                              {(reportPreview.data?.columns || []).map((column) => (
+                                <td key={column.key} className={column.align === "right" ? "numeric-cell" : ""}>
+                                  {column.format === "status"
+                                    ? <StatusBadge status={row[column.key]} />
+                                    : formatReportCell(row[column.key], column.format)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="report-basis">
+                  <div>
+                    <strong>Reporting basis</strong>
+                    <span>{reportPreview.data?.basis || "Confirmed and seller-scoped records."}</span>
+                  </div>
+                  <span>{(reportPreview.data?.rows || []).length > 50 ? "Showing first 50 rows. Downloads include up to 1,000 records." : "Preview and downloads use the same report data."}</span>
+                </div>
+              </section>
+
+              <div className="report-secondary-grid">
+                <section className="panel">
+                  <div className="section-heading-row">
+                    <div>
+                      <h3>Payment method split</h3>
+                      <p>Confirmed collections within the selected period.</p>
+                    </div>
+                  </div>
                   <div className="table-wrap">
                     <table>
-                      <thead><tr><th>Method</th><th>Count</th><th>Amount</th></tr></thead>
-                      <tbody>{(paymentMethods.data || []).map((row) => <tr key={row.method}><td>{row.method}</td><td>{row.count}</td><td>{formatBDT(row.amount)}</td></tr>)}</tbody>
+                      <thead><tr><th>Method</th><th>Transactions</th><th>Collected</th><th>Share</th></tr></thead>
+                      <tbody>
+                        {(paymentMethods.data || []).length === 0 ? (
+                          <tr><td className="report-table-empty" colSpan="4">No confirmed collections in this period.</td></tr>
+                        ) : (
+                          (paymentMethods.data || []).map((row) => {
+                            const methodTotal = (paymentMethods.data || []).reduce((sum, method) => sum + Number(method.amount || 0), 0);
+                            return (
+                              <tr key={row.method}>
+                                <td>{String(row.method || "Unknown").replaceAll("_", " ")}</td>
+                                <td>{row.count}</td>
+                                <td>{formatBDT(row.amount)}</td>
+                                <td>{methodTotal ? `${((Number(row.amount || 0) / methodTotal) * 100).toFixed(1)}%` : "0%"}</td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
                     </table>
                   </div>
                 </section>
-                <section>
-                  <h3>Sales by product/category</h3>
-                  <div className="table-wrap">
-                    <table>
-                      <thead><tr><th>Type</th><th>Product</th><th>Category</th><th>Principal</th><th>Total</th><th>Status</th></tr></thead>
-                      <tbody>{(salesReport.data?.rows || []).slice(0, 10).map((row, index) => <tr key={`${row.saleType || "sale"}-${row.product}-${index}`}><td>{row.saleType || "EMI"}</td><td>{row.product}</td><td>{row.category}</td><td>{formatBDT(row.principal)}</td><td>{formatBDT(row.totalPayable)}</td><td>{row.status}</td></tr>)}</tbody>
-                    </table>
-                  </div>
+                <section className="panel report-integrity-panel">
+                  <h3>Report integrity</h3>
+                  <dl>
+                    <div><dt>Data scope</dt><dd>Current seller only</dd></div>
+                    <div><dt>Currency</dt><dd>Bangladeshi taka (BDT)</dd></div>
+                    <div><dt>Collection source</dt><dd>Confirmed transactions</dd></div>
+                    <div><dt>PDF layout</dt><dd>A4 landscape with pagination</dd></div>
+                    <div><dt>Generated by</dt><dd>Authenticated seller account</dd></div>
+                  </dl>
+                  <button type="button" className="button secondary report-download-secondary" onClick={() => exportReport("pdf")} disabled={Boolean(reportExporting) || reportRangeInvalid}>
+                    <Download size={16} /> Download current report
+                  </button>
                 </section>
               </div>
             </section>
           )}
-        </main>
-      </div>
 
+          {activeTab === "notifications" && <NotificationInbox />}
+      {overviewMetric && (
+        <div className="modal-backdrop" onClick={() => setOverviewMetric("")}>
+          <section
+            className="modal overview-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="overview-detail-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <div>
+                <h2 id="overview-detail-title">{overviewMetricMeta[overviewMetric]?.title || "Overview details"}</h2>
+                <p>{overviewMetricMeta[overviewMetric]?.description}</p>
+              </div>
+              <button type="button" className="modal-close-button" onClick={() => setOverviewMetric("")} aria-label="Close overview details" title="Close">
+                <X size={18} />
+              </button>
+            </div>
+
+            {overviewDetails.isLoading ? (
+              <p className="hint">Loading related records...</p>
+            ) : overviewDetails.isError ? (
+              <p className="form-error">{overviewDetails.error?.response?.data?.message || "Unable to load overview details."}</p>
+            ) : (
+              <>
+                <div className="overview-detail-summary">
+                  <span><strong>{overviewDetails.data?.count || 0}</strong> records</span>
+                  {overviewMetricMeta[overviewMetric]?.monetary && (
+                    <span><strong>{formatBDT(overviewDetails.data?.total)}</strong> related amount</span>
+                  )}
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Buyer</th><th>Details</th><th>Amount</th><th>Status</th><th aria-label="Open" /></tr></thead>
+                    <tbody>
+                      {(overviewDetails.data?.rows || []).length === 0 ? (
+                        <tr><td colSpan="8" style={{ textAlign: "center", color: "#788783" }}>No related records found.</td></tr>
+                      ) : (
+                        (overviewDetails.data?.rows || []).map((row) => (
+                          <tr key={row.id}>
+                            <td>{row.date ? dayjs(row.date).format("DD MMM YYYY") : "—"}</td>
+                            <td>{row.type || "—"}</td>
+                            <td>{row.reference || "—"}</td>
+                            <td>{row.buyer || "—"}</td>
+                            <td>{row.description || "—"}</td>
+                            <td>{formatBDT(row.amount)}</td>
+                            <td><StatusBadge status={row.status || "recorded"} /></td>
+                            <td>
+                              {row.href ? (
+                                <Link className="dashboard-icon-button" to={row.href} aria-label="Open related record" title="Open">
+                                  <ArrowUpRight size={16} />
+                                </Link>
+                              ) : "—"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
       {loanDetailsModal && (
         <div className="modal-backdrop" onClick={() => setLoanDetailsModal(null)}>
           <form className="modal" onClick={(e) => e.stopPropagation()}>
@@ -1305,6 +1782,6 @@ export default function SellerDashboard() {
           </form>
         </div>
       )}
-    </section>
+    </DashboardShell>
   );
 }

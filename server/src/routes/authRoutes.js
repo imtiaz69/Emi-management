@@ -1,18 +1,26 @@
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const express = require("express");
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const SellerProfile = require("../models/SellerProfile");
 const BuyerProfile = require("../models/BuyerProfile");
+const PendingRegistration = require("../models/PendingRegistration");
 const RefreshToken = require("../models/RefreshToken");
 const asyncHandler = require("../utils/asyncHandler");
 const { isStrongPassword } = require("../utils/password");
 const { createRefreshTokenValue, getRefreshExpiry, hashToken, signToken } = require("../utils/tokens");
 const { writeAudit } = require("../services/auditService");
 const { sendVerificationEmail } = require("../services/emailService");
+const { createNotification, notifyRole } = require("../services/notificationService");
 const { validateBody, z } = require("../middleware/validate");
 const { authenticate } = require("../middleware/auth");
 
 const router = express.Router();
+const OTP_TTL_MS = 10 * 60 * 1000;
+const PENDING_REGISTRATION_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
+const RESEND_COOLDOWN_MS = 60 * 1000;
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(180),
@@ -70,39 +78,46 @@ router.post(
     const exists = await User.findOne({ $or: [{ email: normalizedEmail }, { phone: { $in: getPhoneLookupVariants(normalizedPhone) } }] });
     if (exists) return res.status(409).json({ message: "Email or phone already exists" });
 
-    const otp = generateOtp();
-    const user = await User.create({
-      name,
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      passwordHash: await bcrypt.hash(password, 10),
-      role,
-      status: role === "seller" ? "pending_admin_approval" : "active",
-      isVerified: false,
-      otpCode: otp,
-      otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    const conflictingPendingPhone = await PendingRegistration.findOne({
+      email: { $ne: normalizedEmail },
+      phone: { $in: getPhoneLookupVariants(normalizedPhone) }
     });
+    if (conflictingPendingPhone) return res.status(409).json({ message: "Phone number is already waiting for verification" });
 
-    if (role === "seller") {
-      await SellerProfile.create({
-        userId: user._id,
-        shopName: shopName || `${name}'s Shop`,
-        ownerName: ownerName || name,
-        address: address || "Not provided",
-        businessType,
-        tradeLicenseNo
-      });
-    } else {
-      await BuyerProfile.create({ userId: user._id, address: address || "", nidNumber: nidNumber || "" });
-    }
+    const otp = generateOtp();
+    const now = new Date();
+    const pendingRegistration = await PendingRegistration.findOneAndUpdate(
+      { email: normalizedEmail },
+      {
+        name,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        passwordHash: await bcrypt.hash(password, 10),
+        role,
+        profileData: {
+          shopName,
+          ownerName,
+          address,
+          businessType,
+          tradeLicenseNo,
+          nidNumber
+        },
+        otpHash: await bcrypt.hash(otp, 10),
+        otpExpiresAt: new Date(now.getTime() + OTP_TTL_MS),
+        verificationAttempts: 0,
+        lastSentAt: now,
+        purgeAt: new Date(now.getTime() + PENDING_REGISTRATION_TTL_MS)
+      },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    );
 
-    const emailResult = await sendVerificationEmail({ to: user.email, otp, name: user.name });
-    await writeAudit(user._id, "auth.registered", "User", user._id, { role });
+    const emailResult = await sendVerificationEmail({ to: pendingRegistration.email, otp, name: pendingRegistration.name });
     res.status(201).json({
-      message: "Account created. Please verify your email before logging in.",
+      message: "Verification code sent. Your account will be created after email verification.",
       verificationRequired: true,
-      email: user.email,
-      user: sanitizeUser(user),
+      pendingRegistration: true,
+      email: pendingRegistration.email,
+      expiresInSeconds: OTP_TTL_MS / 1000,
       ...getDevelopmentOtpPayload(emailResult, otp)
     });
   })
@@ -112,12 +127,22 @@ router.post(
   "/login",
   validateBody(loginSchema),
   asyncHandler(async (req, res) => {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: email?.toLowerCase() });
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+    const normalizedEmail = req.body.email?.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail }).select("email");
+      if (pendingRegistration) {
+        return res.status(403).json({
+          message: "Please verify your email to finish creating your account.",
+          verificationRequired: true,
+          email: pendingRegistration.email
+        });
+      }
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
     if (user.lockUntil && user.lockUntil > new Date()) return res.status(423).json({ message: "Account locked after failed login attempts" });
 
-    const valid = await bcrypt.compare(password, user.passwordHash);
+    const valid = await bcrypt.compare(req.body.password, user.passwordHash);
     if (!valid) {
       user.failedLoginAttempts += 1;
       if (user.failedLoginAttempts >= 5) user.lockUntil = new Date(Date.now() + 15 * 60 * 1000);
@@ -140,6 +165,11 @@ router.post(
   })
 );
 
+/*
+ * Existing unverified users from earlier project versions remain supported by
+ * the verification and resend handlers below. New registrations use
+ * PendingRegistration and do not create User/Profile records before OTP.
+ */
 router.post(
   "/refresh",
   validateBody(refreshSchema),
@@ -193,13 +223,42 @@ router.post(
   "/resend-verification",
   validateBody(resendVerificationSchema),
   asyncHandler(async (req, res) => {
-    const user = await User.findOne({ email: req.body.email.toLowerCase() });
+    const normalizedEmail = req.body.email.toLowerCase();
+    const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail });
+    if (pendingRegistration) {
+      const elapsed = Date.now() - pendingRegistration.lastSentAt.getTime();
+      if (elapsed < RESEND_COOLDOWN_MS) {
+        const retryAfter = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
+        return res.status(429).json({
+          message: `Please wait ${retryAfter} seconds before requesting another code.`,
+          retryAfter
+        });
+      }
+
+      const otp = generateOtp();
+      pendingRegistration.otpHash = await bcrypt.hash(otp, 10);
+      pendingRegistration.otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+      pendingRegistration.verificationAttempts = 0;
+      pendingRegistration.lastSentAt = new Date();
+      pendingRegistration.purgeAt = new Date(Date.now() + PENDING_REGISTRATION_TTL_MS);
+      await pendingRegistration.save();
+      const emailResult = await sendVerificationEmail({ to: pendingRegistration.email, otp, name: pendingRegistration.name });
+      return res.json({
+        message: "A new verification code was sent. Please check your email.",
+        verificationRequired: true,
+        email: pendingRegistration.email,
+        expiresInSeconds: OTP_TTL_MS / 1000,
+        ...getDevelopmentOtpPayload(emailResult, otp)
+      });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.json({ message: "If the email exists and is unverified, a verification code has been sent." });
     if (user.isVerified) return res.json({ message: "Email is already verified.", alreadyVerified: true });
 
     const otp = generateOtp();
     user.otpCode = otp;
-    user.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    user.otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
     await user.save();
     const emailResult = await sendVerificationEmail({ to: user.email, otp, name: user.name });
     await writeAudit(user._id, "auth.verification_resent", "User", user._id);
@@ -219,7 +278,7 @@ router.post(
     const user = await User.findOne({ email: req.body.email.toLowerCase() });
     if (user) {
       user.otpCode = "123456";
-      user.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      user.otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
       await user.save();
       await writeAudit(user._id, "auth.password_reset_requested", "User", user._id);
     }
@@ -276,19 +335,145 @@ router.patch(
 );
 
 async function verifyEmailOtp(req, res) {
-  const { email, otp } = req.body;
-  const user = await User.findOne({ email: email?.toLowerCase() });
-  if (!user || user.otpCode !== otp || !user.otpExpiresAt || user.otpExpiresAt < new Date()) return res.status(400).json({ message: "Invalid or expired OTP" });
+  const normalizedEmail = req.body.email?.toLowerCase();
+  const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail });
+  if (pendingRegistration) {
+    if (!pendingRegistration.otpExpiresAt || pendingRegistration.otpExpiresAt < new Date()) {
+      return res.status(400).json({ message: "Verification code has expired. Please request a new code." });
+    }
+    if (pendingRegistration.verificationAttempts >= MAX_OTP_ATTEMPTS) {
+      return res.status(429).json({ message: "Too many incorrect attempts. Please request a new verification code." });
+    }
+
+    const validOtp = await bcrypt.compare(req.body.otp, pendingRegistration.otpHash);
+    if (!validOtp) {
+      pendingRegistration.verificationAttempts += 1;
+      await pendingRegistration.save();
+      const attemptsRemaining = Math.max(0, MAX_OTP_ATTEMPTS - pendingRegistration.verificationAttempts);
+      return res.status(400).json({
+        message: attemptsRemaining
+          ? `Invalid verification code. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} remaining.`
+          : "Too many incorrect attempts. Please request a new verification code."
+      });
+    }
+
+    const user = await createVerifiedAccount(pendingRegistration._id, req.body.otp);
+    return res.json({ message: "Email verified and account created successfully. You can now log in.", user: sanitizeUser(user) });
+  }
+
+  // Compatibility path for unverified users created before pending registrations were introduced.
+  const user = await User.findOne({ email: normalizedEmail });
+  if (!user || user.otpCode !== req.body.otp || !user.otpExpiresAt || user.otpExpiresAt < new Date()) {
+    return res.status(400).json({ message: "Invalid or expired OTP" });
+  }
   user.isVerified = true;
   user.otpCode = undefined;
   user.otpExpiresAt = undefined;
   await user.save();
   await writeAudit(user._id, "auth.email_verified", "User", user._id);
-  res.json({ message: "Email verified successfully. You can now log in.", user: sanitizeUser(user) });
+  return res.json({ message: "Email verified successfully. You can now log in.", user: sanitizeUser(user) });
+}
+
+async function createVerifiedAccount(pendingRegistrationId, otp) {
+  const session = await mongoose.startSession();
+  let createdUser;
+  try {
+    await session.withTransaction(async () => {
+      const pending = await PendingRegistration.findById(pendingRegistrationId).session(session);
+      if (!pending || pending.otpExpiresAt < new Date() || !(await bcrypt.compare(otp, pending.otpHash))) {
+        const error = new Error("Invalid or expired OTP");
+        error.status = 400;
+        throw error;
+      }
+
+      const conflict = await User.findOne({
+        $or: [{ email: pending.email }, { phone: { $in: getPhoneLookupVariants(pending.phone) } }]
+      }).session(session);
+      if (conflict) {
+        const error = new Error("An account with this email or phone already exists");
+        error.status = 409;
+        throw error;
+      }
+
+      [createdUser] = await User.create(
+        [
+          {
+            name: pending.name,
+            email: pending.email,
+            phone: pending.phone,
+            passwordHash: pending.passwordHash,
+            role: pending.role,
+            status: pending.role === "seller" ? "pending_admin_approval" : "active",
+            isVerified: true
+          }
+        ],
+        { session }
+      );
+
+      if (pending.role === "seller") {
+        await SellerProfile.create(
+          [
+            {
+              userId: createdUser._id,
+              shopName: pending.profileData.shopName || `${pending.name}'s Shop`,
+              ownerName: pending.profileData.ownerName || pending.name,
+              address: pending.profileData.address || "Not provided",
+              businessType: pending.profileData.businessType || "Retail",
+              tradeLicenseNo: pending.profileData.tradeLicenseNo
+            }
+          ],
+          { session }
+        );
+      } else {
+        await BuyerProfile.create(
+          [
+            {
+              userId: createdUser._id,
+              address: pending.profileData.address || "",
+              nidNumber: pending.profileData.nidNumber || ""
+            }
+          ],
+          { session }
+        );
+      }
+
+      await writeAudit(createdUser._id, "auth.email_verified_account_created", "User", createdUser._id, { role: createdUser.role }, { session });
+      await PendingRegistration.deleteOne({ _id: pending._id }, { session });
+    });
+  } finally {
+    await session.endSession();
+  }
+  await createNotification({
+    userId: createdUser._id,
+    title: "Welcome to FinanceLend",
+    messageType: "account_verified",
+    message:
+      createdUser.role === "seller"
+        ? "Your email is verified. Your shop is now waiting for administrator approval."
+        : "Your email is verified. You can now complete KYC and request products on EMI.",
+    category: "account",
+    severity: "success",
+    actionUrl: createdUser.role === "seller" ? "/seller/pending" : "/buyer",
+    metadata: { role: createdUser.role },
+    dedupeKey: `user:${createdUser._id}:verified`
+  }).catch((error) => console.error("Unable to create welcome notification", error));
+  if (createdUser.role === "seller") {
+    await notifyRole("admin", {
+      title: "Seller approval required",
+      messageType: "seller_awaiting_approval",
+      message: `${createdUser.name} verified their email and submitted a seller account for approval.`,
+      category: "account",
+      severity: "warning",
+      actionUrl: "/admin?tab=sellerApprovals",
+      metadata: { sellerId: createdUser._id },
+      dedupeKey: `seller:${createdUser._id}:awaiting-approval`
+    }).catch((error) => console.error("Unable to create admin seller notification", error));
+  }
+  return createdUser;
 }
 
 function generateOtp() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 function normalizeBangladeshPhone(phone) {
@@ -308,9 +493,9 @@ function getPhoneLookupVariants(normalizedPhone) {
 }
 
 function getDevelopmentOtpPayload(emailResult, otp) {
-  const shouldExposeOtp = process.env.NODE_ENV !== "production" || process.env.EXPOSE_EMAIL_OTP === "true";
+  const shouldExposeOtp = process.env.EMAIL_PROVIDER === "mock" && process.env.EXPOSE_EMAIL_OTP === "true";
   return {
-    ...(emailResult?.mocked || shouldExposeOtp ? { mockOtp: otp } : {}),
+    ...(emailResult?.mocked && shouldExposeOtp ? { mockOtp: otp } : {}),
     ...(emailResult?.error ? { emailWarning: emailResult.error } : {})
   };
 }

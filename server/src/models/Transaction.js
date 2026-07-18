@@ -14,6 +14,13 @@ const transactionSchema = new mongoose.Schema(
     paymentDate: { type: Date, default: Date.now },
     gatewayRef: String,
     receiptNo: { type: String, unique: true },
+    allocations: [
+      {
+        scheduleId: { type: mongoose.Schema.Types.ObjectId, ref: "EMISchedule" },
+        installmentNo: Number,
+        amount: Number
+      }
+    ],
     recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     notes: String
   },

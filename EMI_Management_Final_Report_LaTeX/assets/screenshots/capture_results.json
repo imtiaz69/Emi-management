@@ -1,0 +1,102 @@
+{
+  "capturedAt": "2026-07-17T20:28:28.774Z",
+  "captures": [
+    {
+      "filename": "home-desktop.png",
+      "description": "Current public home page",
+      "title": "EMI Management",
+      "heading": "EMI management and loan tracking for local commerce.",
+      "url": "http://localhost:5173/",
+      "bodyTextLength": 3243
+    },
+    {
+      "filename": "marketplace-desktop.png",
+      "description": "Current four-column marketplace",
+      "title": "EMI Management",
+      "heading": "Buyer Marketplace",
+      "url": "http://localhost:5173/marketplace",
+      "bodyTextLength": 1554
+    },
+    {
+      "filename": "buyer-cart.png",
+      "description": "Current buyer cart",
+      "title": "EMI Management",
+      "heading": "Shopping Cart",
+      "url": "http://localhost:5173/cart",
+      "bodyTextLength": 1086
+    },
+    {
+      "filename": "checkout.png",
+      "description": "Current checkout",
+      "title": "EMI Management",
+      "heading": "Checkout",
+      "url": "http://localhost:5173/checkout",
+      "bodyTextLength": 1109
+    },
+    {
+      "filename": "buyer-overview.png",
+      "description": "Current buyer dashboard overview",
+      "title": "EMI Management",
+      "heading": "Overview",
+      "url": "http://localhost:5173/buyer?tab=overview",
+      "bodyTextLength": 663
+    },
+    {
+      "filename": "buyer-loans.png",
+      "description": "Current buyer EMI loans",
+      "title": "EMI Management",
+      "heading": "My EMI loans",
+      "url": "http://localhost:5173/buyer?tab=loans",
+      "bodyTextLength": 993
+    },
+    {
+      "filename": "buyer-kyc.png",
+      "description": "Current buyer KYC workspace",
+      "title": "EMI Management",
+      "heading": "KYC upload",
+      "url": "http://localhost:5173/buyer?tab=kyc",
+      "bodyTextLength": 775
+    },
+    {
+      "filename": "seller-overview.png",
+      "description": "Current seller dashboard overview",
+      "title": "EMI Management",
+      "heading": "Overview",
+      "url": "http://localhost:5173/seller",
+      "bodyTextLength": 1129
+    },
+    {
+      "filename": "seller-reports.png",
+      "description": "Current seller reporting workspace",
+      "title": "EMI Management",
+      "heading": "Reports",
+      "url": "http://localhost:5173/seller",
+      "bodyTextLength": 1145
+    },
+    {
+      "filename": "admin-kyc-review.png",
+      "description": "Current administrator KYC review workspace",
+      "title": "EMI Management",
+      "heading": "KYC review",
+      "url": "http://localhost:5173/admin",
+      "bodyTextLength": 517
+    },
+    {
+      "filename": "home-mobile.png",
+      "description": "Current mobile home page",
+      "title": "EMI Management",
+      "heading": "EMI management and loan tracking for local commerce.",
+      "url": "http://localhost:5173/",
+      "bodyTextLength": 3202
+    },
+    {
+      "filename": "marketplace-mobile.png",
+      "description": "Current mobile marketplace",
+      "title": "EMI Management",
+      "heading": "Buyer Marketplace",
+      "url": "http://localhost:5173/marketplace",
+      "bodyTextLength": 1513
+    }
+  ],
+  "runtimeErrors": []
+}

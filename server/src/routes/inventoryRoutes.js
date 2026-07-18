@@ -5,6 +5,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { objectId, validateBody, z } = require("../middleware/validate");
 const { writeInventoryEntry } = require("../services/inventoryService");
+const { notifyLowStockProduct } = require("../services/notificationService");
 
 const router = express.Router();
 router.use(authenticate, authorize("seller", "admin"));
@@ -54,6 +55,7 @@ router.post(
       referenceId: product._id,
       note: req.body.note
     });
+    await notifyLowStockProduct(product).catch((error) => console.error("Unable to create stock notification", error));
     res.json(product);
   })
 );

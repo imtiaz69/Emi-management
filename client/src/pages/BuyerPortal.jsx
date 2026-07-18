@@ -2,26 +2,44 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { Heart, ShoppingCart, Trash2, UserRound } from "lucide-react";
-import { api } from "../api/http";
+import {
+  BadgeDollarSign,
+  Bell,
+  CalendarClock,
+  ClipboardList,
+  CreditCard,
+  Heart,
+  History,
+  LayoutDashboard,
+  ShieldCheck,
+  ShoppingCart,
+  Star,
+  Store,
+  Trash2,
+  Truck,
+  UserRound,
+  X
+} from "lucide-react";
+import { api, openProtectedFile } from "../api/http";
 import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
 import ProtectedImage from "../components/ProtectedImage.jsx";
+import DashboardShell from "../components/DashboardShell.jsx";
+import NotificationInbox from "../components/NotificationInbox.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import StatCard from "../components/StatCard.jsx";
 import { KYC_DOCUMENT_TYPES, formatKycType } from "../utils/kyc.js";
-import { generateReceiptPdf } from "../utils/receipt.js";
 import { notifyError, notifyInfo, notifySuccess, notifyWarning } from "../utils/toast.js";
 
 const buyerTabs = [
-  { key: "overview", label: "Overview" },
-  { key: "wishlist", label: "Wishlist" },
-  { key: "profile", label: "Buyer profile" },
-  { key: "kyc", label: "KYC upload" },
-  { key: "loans", label: "My EMI loans" },
-  { key: "applications", label: "EMI applications" },
-  { key: "orders", label: "Orders & delivery" },
-  { key: "notifications", label: "Notifications" },
-  { key: "payments", label: "Payment history" }
+  { key: "overview", label: "Overview", icon: LayoutDashboard, group: "Workspace" },
+  { key: "notifications", label: "Notifications", icon: Bell, group: "Workspace" },
+  { key: "wishlist", label: "Wishlist", icon: Heart, group: "Shopping" },
+  { key: "orders", label: "Orders & delivery", icon: Truck, group: "Shopping" },
+  { key: "profile", label: "Buyer profile", icon: UserRound, group: "Verification" },
+  { key: "kyc", label: "KYC upload", icon: ShieldCheck, group: "Verification" },
+  { key: "loans", label: "My EMI loans", icon: BadgeDollarSign, group: "Finance" },
+  { key: "applications", label: "EMI applications", icon: ClipboardList, group: "Finance" },
+  { key: "payments", label: "Payment history", icon: History, group: "Finance" }
 ];
 
 const buyerTabKeys = new Set(buyerTabs.map((tab) => tab.key));
@@ -49,6 +67,7 @@ export default function BuyerPortal() {
     employmentType: "salaried"
   });
   const [paymentDrafts, setPaymentDrafts] = useState({});
+  const [paymentModalLoanId, setPaymentModalLoanId] = useState("");
   const [activeTab, setActiveTab] = useState(() => getInitialBuyerTab(location.search));
   const stripeParams = new URLSearchParams(location.search);
   const stripeStatus = stripeParams.get("stripe");
@@ -60,7 +79,6 @@ export default function BuyerPortal() {
   const applications = useQuery({ queryKey: ["emi-applications"], queryFn: async () => (await api.get("/emi-applications")).data });
   const summary = useQuery({ queryKey: ["buyer-summary"], queryFn: async () => (await api.get("/reports/summary")).data });
   const orders = useQuery({ queryKey: ["buyer-orders"], queryFn: async () => (await api.get("/orders")).data });
-  const notifications = useQuery({ queryKey: ["notifications"], queryFn: async () => (await api.get("/notifications")).data });
   const wishlist = useQuery({ queryKey: ["wishlist"], queryFn: async () => (await api.get("/wishlist")).data });
 
   useEffect(() => {
@@ -141,20 +159,10 @@ export default function BuyerPortal() {
     onError: (err) => notifyError(err, "Unable to remove wishlist product.")
   });
 
-  const mockPay = useMutation({
-    mutationFn: async ({ loanId, amount, allocationMode, installmentCount }) => api.post("/payments/mock-gateway", { loanId, amount, allocationMode, installmentCount }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["buyer-loans"] });
-      queryClient.invalidateQueries({ queryKey: ["buyer-summary"] });
-      queryClient.invalidateQueries({ queryKey: ["payments"] });
-      notifySuccess("Mock EMI payment recorded successfully.");
-    },
-    onError: (err) => notifyError(err, "Unable to record mock EMI payment.")
-  });
-
   const stripePay = useMutation({
     mutationFn: async ({ loanId, amount, allocationMode, installmentCount }) => api.post("/payments/stripe/create-checkout-session", { loanId, amount, allocationMode, installmentCount }),
     onSuccess: ({ data }) => {
+      setPaymentModalLoanId("");
       notifyInfo("Redirecting to Stripe for EMI payment.");
       window.location.href = data.url;
     },
@@ -213,6 +221,13 @@ export default function BuyerPortal() {
   }
 
   function buildPaymentPayload(loan) {
+    if (loan.status === "approved") {
+      return {
+        loanId: loan._id,
+        allocationMode: "next_due",
+        amount: Number(loan.downPayment || 0)
+      };
+    }
     const draft = paymentDrafts[loan._id] || {};
     const allocationMode = draft.allocationMode || "next_due";
     const installmentCount = Math.max(Number(draft.installmentCount || 2), 1);
@@ -226,6 +241,32 @@ export default function BuyerPortal() {
   }
 
   const nextDueAmount = (loans.data || []).reduce((sum, loan) => sum + Number(loan.paymentSummary?.nextDueAmount || 0), 0);
+  const paymentModalLoan = (loans.data || []).find((loan) => loan._id === paymentModalLoanId);
+  const paymentModalDraft = paymentModalLoan ? paymentDrafts[paymentModalLoan._id] || { allocationMode: "next_due", installmentCount: "2", amount: "" } : null;
+  const paymentModalPayload = paymentModalLoan ? buildPaymentPayload(paymentModalLoan) : null;
+  const paymentModalInstallments = paymentModalLoan ? getPayableInstallments(paymentModalLoan) : [];
+  const paymentModalInstallmentCount = paymentModalDraft
+    ? Math.min(Math.max(Number(paymentModalDraft.installmentCount || 2), 2), Math.max(paymentModalInstallments.length, 2))
+    : 2;
+
+  function openPaymentModal(loan) {
+    const allocationMode = "next_due";
+    updatePaymentDraft(loan._id, {
+      allocationMode,
+      installmentCount: "2",
+      amount: loan.status === "approved" ? String(loan.downPayment || "") : ""
+    });
+    setPaymentModalLoanId(loan._id);
+  }
+
+  useEffect(() => {
+    if (!paymentModalLoanId) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && !stripePay.isPending) setPaymentModalLoanId("");
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [paymentModalLoanId, stripePay.isPending]);
 
   useEffect(() => {
     const stripeReturnKey = `${stripeStatus || ""}:${stripeSessionId || ""}`;
@@ -244,35 +285,14 @@ export default function BuyerPortal() {
   }, [stripeSessionId, stripeStatus]);
 
   return (
-    <section className="seller-dashboard buyer-dashboard">
-      <div className="seller-header">
-        <div>
-          <h1>Buyer Dashboard</h1>
-          <p>Use the left sidebar to manage profile, KYC, EMI loans, orders, notifications, and payment history.</p>
-        </div>
-      </div>
-
-      <div className="seller-dashboard-layout">
-        <aside className="seller-sidebar buyer-sidebar">
-          <div className="sidebar-brand">
-            <UserRound size={20} />
-            <span>Buyer Hub</span>
-          </div>
-
-          <nav className="sidebar-nav">
-            {buyerTabs.map((tab) => (
-              <button
-                key={tab.key}
-                className={`sidebar-link ${activeTab === tab.key ? "active" : ""}`}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </aside>
-
-        <main className="seller-content">
+    <DashboardShell
+      title={buyerTabs.find((tab) => tab.key === activeTab)?.label || "Buyer Dashboard"}
+      description="Track purchases, verification, EMI applications, payments, and delivery."
+      roleLabel="Buyer Workspace"
+      tabs={buyerTabs}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+    >
           {activeTab === "overview" && (
             <>
               <div className="page-title">
@@ -283,10 +303,12 @@ export default function BuyerPortal() {
               </div>
               <div className="stats-grid">
                 <StatCard label="Active EMIs" value={summary.data?.activeEmis ?? 0} />
-                <StatCard label="Due amount" value={`BDT ${Math.round(summary.data?.dueAmount || 0)}`} tone="green" />
+                <StatCard label="Total outstanding" value={`BDT ${Math.round(summary.data?.dueAmount || 0)}`} tone="red" />
+                <StatCard label="Total amount in EMI" value={`BDT ${Math.round(summary.data?.totalEmiAmount || 0)}`} tone="purple" />
+                <StatCard label="Financed product amount" value={`BDT ${Math.round(summary.data?.totalFinancedAmount || 0)}`} />
                 <StatCard label="Next due total" value={`BDT ${Math.round(nextDueAmount)}`} tone="purple" />
                 <StatCard label="Overdues" value={summary.data?.overdueCount ?? 0} tone="red" />
-                <StatCard label="Paid this month" value={`BDT ${Math.round(summary.data?.monthlyCollection || 0)}`} tone="purple" />
+                <StatCard label="EMI paid this month" value={`BDT ${Math.round(summary.data?.monthlyCollection || 0)}`} tone="green" />
               </div>
 
               {buyerProfile.data?.readiness && !buyerProfile.data.readiness.ready && (
@@ -451,94 +473,104 @@ export default function BuyerPortal() {
 
           {activeTab === "loans" && (
             <section className="panel">
-              <h2>My EMI loans</h2>
-              <p className="muted">Stripe is in test mode. Use card 4242 4242 4242 4242 with any future expiry and CVC.</p>
+              <div className="page-title">
+                <div>
+                  <h2>My EMI loans</h2>
+                  <p>Approved requests become deliverable after the down payment is confirmed. Monthly EMI collection starts from the generated schedule.</p>
+                </div>
+              </div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Seller</th><th>Product</th><th>Total</th><th>Payable</th><th>Status</th><th>Actions</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Seller</th>
+                      <th>Product</th>
+                      <th>Total EMI</th>
+                      <th>Next EMI date</th>
+                      <th>Payable</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {(loans.data || []).map((loan) => {
-                      const draft = paymentDrafts[loan._id] || { allocationMode: "next_due", amount: "" };
-                      const payableInstallments = getPayableInstallments(loan);
-                      const installmentCount = Math.min(
-                        Math.max(Number(draft.installmentCount || 2), 2),
-                        Math.max(payableInstallments.length, 2)
-                      );
-                      const suggestedAmount = getSuggestedAmount(loan, draft.allocationMode, installmentCount);
-                      const paymentPayload = buildPaymentPayload(loan);
+                      const nextInstallment = getPayableInstallments(loan)[0];
+                      const dueState = getDueDateState(nextInstallment?.dueDate);
+                      const sellerId = loan.sellerId?._id || loan.sellerId;
                       return (
                         <tr key={loan._id}>
-                          <td>{loan.sellerId?.name}</td>
-                          <td>{loan.productId?.name || "Offline loan"}</td>
-                          <td>BDT {loan.totalPayable}</td>
                           <td>
-                            <span>Next: BDT {Math.round(loan.paymentSummary?.nextDueAmount || 0)}</span><br />
-                            <span>Overdue: BDT {Math.round(loan.paymentSummary?.overdueAmount || 0)}</span><br />
-                            <span>Outstanding: BDT {Math.round(loan.paymentSummary?.outstandingAmount || 0)}</span>
+                            {sellerId ? (
+                              <Link className="seller-loan-link" to={`/stores/${sellerId}`} title={`Open seller ${sellerId}`}>
+                                <Store size={16} />
+                                <span>
+                                  <strong>{loan.sellerStore?.shopName || loan.sellerId?.name || "Seller"}</strong>
+                                  <small>
+                                    {loan.sellerStore?.reviewCount
+                                      ? <><Star size={12} /> {loan.sellerStore.averageRating} ({loan.sellerStore.reviewCount})</>
+                                      : "View seller store"}
+                                  </small>
+                                </span>
+                              </Link>
+                            ) : "-"}
                           </td>
-                          <td><StatusBadge status={loan.status} /></td>
+                          <td>
+                            {loan.productId?._id ? <Link to={`/products/${loan.productId._id}`}>{loan.productId.name}</Link> : "Offline loan"}
+                            {loan.selectedColorName && <small className="table-subtext">Color: {loan.selectedColorName}</small>}
+                          </td>
+                          <td>
+                            <strong>BDT {Math.round(loan.totalPayable || 0).toLocaleString("en-BD")}</strong>
+                            <small className="table-subtext">Principal BDT {Math.round(loan.principal || 0).toLocaleString("en-BD")}</small>
+                          </td>
+                          <td>
+                            {nextInstallment ? (
+                              <span className={`due-date-indicator ${dueState.tone}`}>
+                                <CalendarClock size={15} />
+                                <span>
+                                  <strong>{dayjs(nextInstallment.dueDate).format("DD MMM YYYY")}</strong>
+                                  <small>{dueState.label}</small>
+                                </span>
+                              </span>
+                            ) : loan.status === "approved" ? (
+                              <span className="status-note warning">Starts after down payment</span>
+                            ) : (
+                              <span className="status-note">No upcoming EMI</span>
+                            )}
+                          </td>
+                          <td>
+                            {loan.status === "approved" ? (
+                              <>
+                                <strong>Down payment: BDT {Math.round(loan.downPayment || 0).toLocaleString("en-BD")}</strong>
+                                <small className="table-subtext">Required before delivery</small>
+                              </>
+                            ) : (
+                              <>
+                                <span>Next: BDT {Math.round(loan.paymentSummary?.nextDueAmount || 0).toLocaleString("en-BD")}</span><br />
+                                <span>Overdue: BDT {Math.round(loan.paymentSummary?.overdueAmount || 0).toLocaleString("en-BD")}</span><br />
+                                <span>Outstanding: BDT {Math.round(loan.paymentSummary?.outstandingAmount || 0).toLocaleString("en-BD")}</span>
+                              </>
+                            )}
+                          </td>
+                          <td>
+                            <StatusBadge status={loan.status} />
+                            {loan.status === "approved" && <small className="table-subtext">Awaiting down payment</small>}
+                          </td>
                           <td className="table-action-cell">
-                            <Link className="button tiny" to={`/loans/${loan._id}`}>View schedule</Link>
-                            <select
-                              className="mini-input"
-                              value={draft.allocationMode}
-                              disabled={loan.status !== "active"}
-                              onChange={(e) => {
-                                const allocationMode = e.target.value;
-                                const nextCount = allocationMode === "next_n" ? installmentCount : draft.installmentCount;
-                                updatePaymentDraft(loan._id, {
-                                  allocationMode,
-                                  installmentCount: nextCount,
-                                  amount: String(getSuggestedAmount(loan, allocationMode, nextCount) || "")
-                                });
-                              }}
-                            >
-                              <option value="next_due">Next installment</option>
-                              <option value="next_n">Multiple installments</option>
-                              <option value="overdue">Overdue balance</option>
-                              <option value="advance">Full outstanding</option>
-                              <option value="custom">Custom amount</option>
-                            </select>
-                            {draft.allocationMode === "next_n" && (
-                              <input
-                                className="mini-input"
-                                type="number"
-                                min="2"
-                                max={Math.max(payableInstallments.length, 2)}
-                                title="Number of upcoming EMI installments to pay together"
-                                value={installmentCount}
-                                disabled={loan.status !== "active"}
-                                onChange={(e) => {
-                                  const nextCount = Math.min(
-                                    Math.max(Number(e.target.value || 2), 2),
-                                    Math.max(payableInstallments.length, 2)
-                                  );
-                                  updatePaymentDraft(loan._id, {
-                                    installmentCount: String(nextCount),
-                                    amount: String(getSuggestedAmount(loan, "next_n", nextCount) || "")
-                                  });
-                                }}
-                              />
+                            {["active", "closed"].includes(loan.status) && <Link className="button tiny secondary" to={`/loans/${loan._id}`}>View details</Link>}
+                            {["approved", "active"].includes(loan.status) && (
+                              <button
+                                className="button tiny"
+                                disabled={stripePay.isPending || (loan.status === "active" && !loan.paymentSummary?.outstandingAmount)}
+                                onClick={() => openPaymentModal(loan)}
+                              >
+                                <CreditCard size={14} /> Pay
+                              </button>
                             )}
-                            <input
-                              className="mini-input"
-                              type="number"
-                              min="1"
-                              placeholder={suggestedAmount ? `BDT ${Math.round(suggestedAmount)}` : "Amount"}
-                              value={draft.amount}
-                              disabled={loan.status !== "active"}
-                              onChange={(e) => updatePaymentDraft(loan._id, { amount: e.target.value })}
-                            />
-                            {draft.allocationMode === "next_n" && (
-                              <span className="hint">Next {installmentCount} EMIs: BDT {Math.round(suggestedAmount || 0)}</span>
-                            )}
-                            <button className="button tiny" disabled={loan.status !== "active" || stripePay.isPending || !paymentPayload.amount} onClick={() => stripePay.mutate(paymentPayload)}>Stripe</button>
-                            <button className="button tiny ghost" disabled={loan.status !== "active" || mockPay.isPending || !paymentPayload.amount} onClick={() => mockPay.mutate(paymentPayload)}>Mock pay</button>
                           </td>
                         </tr>
                       );
                     })}
-                    {(loans.data || []).length === 0 && <tr><td colSpan="6" style={{ textAlign: "center", color: "#888" }}>No EMI loans yet.</td></tr>}
+                    {(loans.data || []).length === 0 && <tr><td colSpan="7" style={{ textAlign: "center", color: "#888" }}>No EMI loans yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -594,7 +626,7 @@ export default function BuyerPortal() {
                           <td className="table-action-cell">
                             <Link className="button tiny" to={`/orders/${order._id}`}>Track</Link>
                             {order.paymentMode === "cash" && order.paymentStatus === "unpaid" && (
-                              <button className="button tiny" disabled={stripePayOrder.isPending} onClick={() => stripePayOrder.mutate(order._id)}>Stripe</button>
+                              <button className="button tiny" disabled={stripePayOrder.isPending} onClick={() => stripePayOrder.mutate(order._id)}>Pay</button>
                             )}
                           </td>
                         </tr>
@@ -608,21 +640,7 @@ export default function BuyerPortal() {
           )}
 
           {activeTab === "notifications" && (
-            <section className="panel">
-              <h2>Notifications</h2>
-              <div className="list-stack">
-                {(notifications.data || []).length === 0 ? (
-                  <p className="hint">No notifications yet.</p>
-                ) : (
-                  (notifications.data || []).map((item) => (
-                    <div className="list-row" key={item._id}>
-                      <div><strong>{item.messageType}</strong><span>{item.message}</span></div>
-                      <StatusBadge status={item.status} />
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
+            <NotificationInbox />
           )}
 
           {activeTab === "payments" && (
@@ -644,7 +662,11 @@ export default function BuyerPortal() {
                           <td>BDT {payment.amount}</td>
                           <td>{payment.method}</td>
                           <td>{dayjs(payment.paymentDate).format("DD MMM YYYY")}</td>
-                          <td><button className="button tiny" onClick={() => generateReceiptPdf(payment)}>Download</button></td>
+                          <td>
+                            <button className="button tiny" onClick={() => openProtectedFile(`/payments/${payment._id}/receipt`)}>
+                              Download PDF
+                            </button>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -653,8 +675,133 @@ export default function BuyerPortal() {
               </div>
             </section>
           )}
-        </main>
-      </div>
-    </section>
+          {paymentModalLoan && paymentModalDraft && paymentModalPayload && (
+            <div
+              className="modal-backdrop payment-modal-backdrop"
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget && !stripePay.isPending) setPaymentModalLoanId("");
+              }}
+            >
+              <section className="modal payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
+                <div className="modal-heading">
+                  <div>
+                    <span className="modal-kicker">{paymentModalLoan.status === "approved" ? "Activate EMI purchase" : "Installment payment"}</span>
+                    <h2 id="payment-modal-title">
+                      {paymentModalLoan.status === "approved" ? "Pay the required down payment" : "Choose what you want to pay"}
+                    </h2>
+                    <p>{paymentModalLoan.productId?.name || "EMI loan"} from {paymentModalLoan.sellerStore?.shopName || paymentModalLoan.sellerId?.name || "seller"}</p>
+                  </div>
+                  <button
+                    className="icon-button modal-close-button"
+                    type="button"
+                    aria-label="Close payment dialog"
+                    disabled={stripePay.isPending}
+                    onClick={() => setPaymentModalLoanId("")}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {paymentModalLoan.status === "approved" ? (
+                  <div className="payment-activation-notice">
+                    <CreditCard size={22} />
+                    <div>
+                      <strong>Down payment confirms this EMI purchase</strong>
+                      <p>After Stripe confirms this payment, the product becomes ready for seller processing and your monthly schedule starts.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="payment-modal-fields">
+                    <label>Payment option
+                      <select
+                        value={paymentModalDraft.allocationMode}
+                        onChange={(event) => {
+                          const allocationMode = event.target.value;
+                          updatePaymentDraft(paymentModalLoan._id, { allocationMode, amount: "" });
+                        }}
+                      >
+                        <option value="next_due">Next installment</option>
+                        <option value="next_n" disabled={paymentModalInstallments.length < 2}>Multiple installments</option>
+                        <option value="overdue" disabled={!paymentModalLoan.paymentSummary?.overdueAmount}>All overdue installments</option>
+                        <option value="advance">Full outstanding balance</option>
+                        <option value="custom">Custom partial amount</option>
+                      </select>
+                    </label>
+
+                    {paymentModalDraft.allocationMode === "next_n" && (
+                      <label>Number of installments
+                        <select
+                          value={paymentModalInstallmentCount}
+                          onChange={(event) => updatePaymentDraft(paymentModalLoan._id, { installmentCount: event.target.value, amount: "" })}
+                        >
+                          {paymentModalInstallments.slice(0, 12).map((_, index) => (
+                            index >= 1 ? <option key={index + 1} value={index + 1}>{index + 1} installments</option> : null
+                          ))}
+                        </select>
+                      </label>
+                    )}
+
+                    {paymentModalDraft.allocationMode === "custom" && (
+                      <label>Custom amount (BDT)
+                        <input
+                          type="number"
+                          min="1"
+                          max={paymentModalLoan.paymentSummary?.outstandingAmount || undefined}
+                          value={paymentModalDraft.amount}
+                          onChange={(event) => updatePaymentDraft(paymentModalLoan._id, { amount: event.target.value })}
+                          placeholder="Enter an amount"
+                        />
+                      </label>
+                    )}
+
+                    <div className="selected-installments">
+                      {(paymentModalDraft.allocationMode === "next_n"
+                        ? paymentModalInstallments.slice(0, paymentModalInstallmentCount)
+                        : paymentModalInstallments.slice(0, 1)
+                      ).map((installment) => (
+                        <div key={installment._id}>
+                          <span>Installment {installment.installmentNo}</span>
+                          <strong>BDT {Math.round(installment.balance || 0).toLocaleString("en-BD")}</strong>
+                          <small>{dayjs(installment.dueDate).format("DD MMM YYYY")}</small>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="payment-total-row">
+                  <div>
+                    <span>{paymentModalLoan.status === "approved" ? "Required down payment" : "Stripe payment total"}</span>
+                    <small>No extra interest or payment markup is added here.</small>
+                  </div>
+                  <strong>BDT {Math.round(paymentModalPayload.amount || 0).toLocaleString("en-BD")}</strong>
+                </div>
+
+                <div className="modal-actions">
+                  <button className="button secondary" type="button" disabled={stripePay.isPending} onClick={() => setPaymentModalLoanId("")}>Cancel</button>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={stripePay.isPending || !paymentModalPayload.amount}
+                    onClick={() => stripePay.mutate(paymentModalPayload)}
+                  >
+                    <CreditCard size={16} />
+                    {stripePay.isPending ? "Opening Stripe..." : "Continue to pay"}
+                  </button>
+                </div>
+                <p className="stripe-test-note">Stripe test card: 4242 4242 4242 4242, any future expiry, and any CVC.</p>
+              </section>
+            </div>
+          )}
+    </DashboardShell>
   );
+}
+
+function getDueDateState(dueDate) {
+  if (!dueDate) return { tone: "safe", label: "Not scheduled" };
+  const days = dayjs(dueDate).startOf("day").diff(dayjs().startOf("day"), "day");
+  if (days < 0) return { tone: "urgent", label: `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} overdue` };
+  if (days <= 7) return { tone: "urgent", label: days === 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}` };
+  return { tone: "safe", label: `Due in ${days} days` };
 }

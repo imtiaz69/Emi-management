@@ -1,0 +1,61 @@
+services:
+  - type: web
+    name: financelend-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: Asia/Dhaka
+      - key: USE_MEMORY_DB
+        value: "false"
+      - key: AUTO_SEED
+        value: "false"
+      - key: EXPOSE_EMAIL_OTP
+        value: "false"
+      - key: UPLOAD_DIR
+        value: uploads
+      - key: STRIPE_CURRENCY
+        value: bdt
+      - key: ALLOW_STRIPE_CURRENCY_CONVERSION
+        value: "false"
+      - key: ALLOW_STRIPE_RETURN_CONFIRM
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: REFRESH_TOKEN_SECRET
+        generateValue: true
+      - key: MONGO_URI
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_APP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

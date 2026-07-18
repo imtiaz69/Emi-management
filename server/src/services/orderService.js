@@ -10,8 +10,123 @@ const { calculateSchedule } = require("./emiService");
 const { convertReservationToSale, releaseReservation, reserveStock } = require("./inventoryService");
 const { writeAudit } = require("./auditService");
 const { assertBuyerReadyForEmi } = require("./buyerReadinessService");
-const { buildReceiptNo, createApplicationForLoan, recordDownPayment } = require("./loanService");
-const { createMockGatewayReference } = require("./paymentService");
+const { buildReceiptNo, createApplicationForLoan } = require("./loanService");
+const { createNotification, notifyLowStockProduct } = require("./notificationService");
+
+function formatMoney(value) {
+  return `BDT ${Number(value || 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+async function notifyCreatedOrder(order) {
+  try {
+    const emiItems = (order.items || []).filter((item) => item.financeMode === "emi");
+    const cashItems = (order.items || []).filter((item) => item.financeMode === "cash");
+    const tasks = [];
+
+    if (emiItems.length) {
+      tasks.push(
+        createNotification({
+          userId: order.buyerId?._id || order.buyerId,
+          title: "EMI request submitted",
+          messageType: "emi_request_submitted",
+          message: `Your EMI request for ${emiItems.map((item) => item.name).join(", ")} was sent to the seller for review.`,
+          category: "loan",
+          severity: "info",
+          actionUrl: "/buyer?tab=applications",
+          metadata: { orderId: order._id, orderNo: order.orderNo },
+          dedupeKey: `order:${order._id}:emi-submitted`
+        })
+      );
+      for (const item of emiItems) {
+        tasks.push(
+          createNotification({
+            userId: item.sellerId,
+            loanId: item.loanId?._id || item.loanId,
+            title: "New EMI request",
+            messageType: "new_emi_request",
+            message: `${order.buyerId?.name || "A buyer"} requested ${item.name} on EMI for ${formatMoney(item.totalPrice)}.`,
+            category: "loan",
+            severity: "warning",
+            actionUrl: item.loanId ? `/loans/${item.loanId?._id || item.loanId}` : "/seller?tab=onlineRequests",
+            metadata: {
+              buyerId: order.buyerId?._id || order.buyerId,
+              orderId: order._id,
+              orderItemId: item._id,
+              productId: item.productId?._id || item.productId
+            },
+            dedupeKey: `order:${order._id}:emi-item:${item._id}:seller`
+          })
+        );
+      }
+    }
+
+    if (cashItems.length) {
+      tasks.push(
+        createNotification({
+          userId: order.buyerId?._id || order.buyerId,
+          title: "Order awaiting payment",
+          messageType: "cash_order_awaiting_payment",
+          message: `Order ${order.orderNo} is ready for secure payment.`,
+          category: "order",
+          severity: "info",
+          actionUrl: `/orders/${order._id}`,
+          metadata: { orderId: order._id, orderNo: order.orderNo, amount: order.total },
+          dedupeKey: `order:${order._id}:awaiting-payment`
+        })
+      );
+    }
+    await Promise.all(tasks);
+  } catch (error) {
+    console.error("Unable to create order notifications", error);
+  }
+}
+
+async function notifyPaidOrder(order) {
+  try {
+    const transactions = await Transaction.find({
+      orderId: order._id,
+      transactionType: "order_payment",
+      status: "confirmed"
+    }).lean();
+    const tasks = [
+      createNotification({
+        userId: order.buyerId?._id || order.buyerId,
+        title: "Order payment confirmed",
+        messageType: "order_payment_confirmed",
+        message: `${formatMoney(order.total)} was received for order ${order.orderNo}.`,
+        category: "payment",
+        severity: "success",
+        actionUrl: `/orders/${order._id}`,
+        metadata: { orderId: order._id, orderNo: order.orderNo, amount: order.total },
+        dedupeKey: `order:${order._id}:payment-confirmed:buyer`
+      })
+    ];
+
+    for (const transaction of transactions) {
+      tasks.push(
+        createNotification({
+          userId: transaction.sellerId,
+          title: "Paid order received",
+          messageType: "paid_order_received",
+          message: `${formatMoney(transaction.amount)} was confirmed for order ${order.orderNo}. It is ready for fulfillment.`,
+          category: "order",
+          severity: "success",
+          actionUrl: `/orders/${order._id}`,
+          metadata: {
+            orderId: order._id,
+            buyerId: order.buyerId?._id || order.buyerId,
+            transactionId: transaction._id,
+            amount: transaction.amount
+          },
+          dedupeKey: `transaction:${transaction._id}:paid-order-seller`
+        })
+      );
+    }
+    await Promise.all(tasks);
+  } catch (error) {
+    console.error("Unable to create paid order notifications", error);
+  }
+}
 
 function buildOrderNo() {
   return `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -88,7 +203,7 @@ async function createOrderFromCart({ buyerId, shippingAddress, billingAddress, c
           deliveryCharge: Number(deliveryCharge || 0),
           total,
           paymentMode: inferPaymentMode(orderItems),
-          paymentStatus: orderItems.some((item) => item.financeMode === "emi") ? "partial" : "unpaid",
+          paymentStatus: "unpaid",
           shippingAddress,
           billingAddress: billingAddress || shippingAddress,
           couponCode: couponCode ? couponCode.toUpperCase() : undefined
@@ -128,7 +243,9 @@ async function createOrderFromCart({ buyerId, shippingAddress, billingAddress, c
     await writeAudit(buyerId, "order.created", "Order", order._id, { orderNo: order.orderNo }, { session });
 
     await session.commitTransaction();
-    return getOrderForUser(order._id, { role: "buyer", _id: buyerId });
+    const populatedOrder = await getOrderForUser(order._id, { role: "buyer", _id: buyerId });
+    await notifyCreatedOrder(populatedOrder);
+    return populatedOrder;
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -187,15 +304,6 @@ async function createRequestedLoansForEmiItems(order, emi, session) {
     ).then((docs) => docs[0]);
 
     await createApplicationForLoan(loan, session);
-    await recordDownPayment({
-      loan,
-      orderId: order._id,
-      amount: downPayment,
-      method: emi.downPaymentMethod || "mock_gateway",
-      actorId: order.buyerId,
-      session,
-      notes: `Online EMI down payment for order ${order.orderNo}`
-    });
 
     item.loanId = loan._id;
   }
@@ -221,12 +329,21 @@ async function listOrdersForUser(user, query = {}) {
   if (user.role === "seller") filter.sellerIds = user._id;
   if (query.fulfillmentStatus) filter.fulfillmentStatus = query.fulfillmentStatus;
   if (query.paymentStatus) filter.paymentStatus = query.paymentStatus;
-  return Order.find(filter)
+  const orders = await Order.find(filter)
     .populate("buyerId", "name email phone")
     .populate("items.productId", "name images")
     .populate("items.loanId")
     .sort({ createdAt: -1 })
-    .limit(200);
+    .limit(200)
+    .lean();
+
+  if (user.role !== "seller") return orders;
+
+  return orders.map((order) => {
+    const items = order.items.filter((item) => item.sellerId.toString() === user._id.toString());
+    const subtotal = items.reduce((sum, item) => sum + Number(item.totalPrice || 0), 0);
+    return { ...order, items, subtotal, total: subtotal };
+  });
 }
 
 async function cancelOrder(orderId, user) {
@@ -258,17 +375,30 @@ async function cancelOrder(orderId, user) {
     await order.save({ session });
     await writeAudit(user._id, "order.cancelled", "Order", order._id, {}, { session });
     await session.commitTransaction();
-    return getOrderForUser(order._id, user);
+    const updatedOrder = await getOrderForUser(order._id, user);
+    const counterpartIds = user.role === "buyer" ? order.sellerIds : [order.buyerId];
+    await Promise.all(
+      counterpartIds.map((userId) =>
+        createNotification({
+          userId,
+          title: "Order cancelled",
+          messageType: "order_cancelled",
+          message: `Order ${order.orderNo} was cancelled.`,
+          category: "order",
+          severity: "warning",
+          actionUrl: `/orders/${order._id}`,
+          metadata: { orderId: order._id, orderNo: order.orderNo },
+          dedupeKey: `order:${order._id}:cancelled:${userId}`
+        })
+      )
+    ).catch((error) => console.error("Unable to create cancellation notifications", error));
+    return updatedOrder;
   } catch (error) {
     await session.abortTransaction();
     throw error;
   } finally {
     session.endSession();
   }
-}
-
-async function markOrderPaid(orderId, user, method = "mock_gateway") {
-  return markOrderPaidWithOptions(orderId, user, method);
 }
 
 function allocateCashOrderPayments(order) {
@@ -291,7 +421,7 @@ function allocateCashOrderPayments(order) {
   }).filter((entry) => entry.amount > 0);
 }
 
-async function markOrderPaidWithOptions(orderId, user, method = "mock_gateway", options = {}) {
+async function markOrderPaidWithOptions(orderId, user, method = "stripe", options = {}) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -310,7 +440,7 @@ async function markOrderPaidWithOptions(orderId, user, method = "mock_gateway", 
 
     const actorId = options.recordedBy || user._id;
     const paymentDate = options.paymentDate || new Date();
-    const gatewayRef = options.gatewayRef || (method === "mock_gateway" ? createMockGatewayReference("ORDER") : undefined);
+    const gatewayRef = options.gatewayRef;
     const notes = options.notes || (method === "stripe" ? "Stripe Checkout cash order payment" : "Cash order payment");
     const paymentAllocations = allocateCashOrderPayments(order);
     if (!paymentAllocations.length) {
@@ -359,7 +489,18 @@ async function markOrderPaidWithOptions(orderId, user, method = "mock_gateway", 
       { session }
     );
     await session.commitTransaction();
-    return getOrderForUser(order._id, user);
+    const paidOrder = await getOrderForUser(order._id, user);
+    await notifyPaidOrder(paidOrder);
+    const cashProductIds = order.items.filter((item) => item.financeMode === "cash").map((item) => item.productId);
+    const lowStockProducts = await Product.find({
+      _id: { $in: cashProductIds },
+      status: "active",
+      $expr: { $lte: ["$stock", "$lowStockThreshold"] }
+    });
+    await Promise.all(lowStockProducts.map((product) => notifyLowStockProduct(product))).catch((error) =>
+      console.error("Unable to create stock notifications", error)
+    );
+    return paidOrder;
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -372,6 +513,27 @@ async function updateOrderFulfillment(orderId, sellerId, payload) {
   const order = await Order.findOne({ _id: orderId, sellerIds: sellerId });
   if (!order) throw new Error("Order not found for this seller");
   const sellerItems = order.items.filter((item) => item.sellerId.toString() === sellerId.toString());
+  const emiLoanIds = sellerItems.filter((item) => item.financeMode === "emi" && item.loanId).map((item) => item.loanId);
+  const deliverableLoanIds = new Set(
+    (await Loan.find({ _id: { $in: emiLoanIds }, status: { $in: ["active", "closed"] } }).select("_id").lean()).map((loan) => loan._id.toString())
+  );
+
+  if (!["cancelled", "returned"].includes(payload.fulfillmentStatus)) {
+    const blockedEmiItem = sellerItems.find(
+      (item) => item.financeMode === "emi" && (!item.loanId || !deliverableLoanIds.has(item.loanId.toString()))
+    );
+    if (blockedEmiItem) {
+      const error = new Error("This EMI product can be processed only after the seller approves the request and Stripe confirms the down payment");
+      error.status = 409;
+      throw error;
+    }
+    if (order.paymentMode === "cash" && order.paymentStatus !== "paid") {
+      const error = new Error("This cash order can be processed only after payment is confirmed");
+      error.status = 409;
+      throw error;
+    }
+  }
+
   sellerItems.forEach((item) => {
     item.fulfillmentStatus = payload.fulfillmentStatus || item.fulfillmentStatus;
   });
@@ -392,6 +554,24 @@ async function updateOrderFulfillment(orderId, sellerId, payload) {
     { new: true, upsert: true }
   );
 
+  await createNotification({
+    userId: order.buyerId,
+    title: `Order ${String(payload.fulfillmentStatus).replaceAll("_", " ")}`,
+    messageType: `order_${payload.fulfillmentStatus}`,
+    message: `Your order ${order.orderNo} is now ${String(payload.fulfillmentStatus).replaceAll("_", " ")}${payload.trackingNo ? `. Tracking number: ${payload.trackingNo}` : "."}`,
+    category: "order",
+    severity: payload.fulfillmentStatus === "delivered" ? "success" : payload.fulfillmentStatus === "cancelled" ? "critical" : "info",
+    actionUrl: `/orders/${order._id}`,
+    metadata: {
+      orderId: order._id,
+      orderNo: order.orderNo,
+      fulfillmentStatus: payload.fulfillmentStatus,
+      trackingNo: payload.trackingNo,
+      courierName: payload.courierName
+    },
+    dedupeKey: `order:${order._id}:seller:${sellerId}:status:${payload.fulfillmentStatus}`
+  }).catch((error) => console.error("Unable to create fulfillment notification", error));
+
   return { order, shipment };
 }
 
@@ -407,7 +587,6 @@ module.exports = {
   createOrderFromCart,
   getOrderForUser,
   listOrdersForUser,
-  markOrderPaid,
   markOrderPaidWithOptions,
   updateOrderFulfillment
 };

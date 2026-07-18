@@ -5,6 +5,7 @@ const Transaction = require("../models/Transaction");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { objectId, validateBody, z } = require("../middleware/validate");
+const { createNotification, notifyRole } = require("../services/notificationService");
 
 const router = express.Router();
 router.use(authenticate);
@@ -36,6 +37,29 @@ router.post(
     const order = await Order.findOne({ _id: req.body.orderId, buyerId: req.user._id, sellerIds: req.body.sellerId });
     if (!order) return res.status(404).json({ message: "Order not found for return" });
     const request = await ReturnRequest.create({ ...req.body, buyerId: req.user._id });
+    await Promise.all([
+      createNotification({
+        userId: request.sellerId,
+        title: "New return request",
+        messageType: "return_requested",
+        message: `${req.user.name} requested a return for order ${order.orderNo}.`,
+        category: "return",
+        severity: "warning",
+        actionUrl: `/orders/${order._id}`,
+        metadata: { returnRequestId: request._id, orderId: order._id, buyerId: req.user._id },
+        dedupeKey: `return:${request._id}:requested:seller`
+      }),
+      notifyRole("admin", {
+        title: "Return request submitted",
+        messageType: "return_requested",
+        message: `${req.user.name} submitted a return request for order ${order.orderNo}.`,
+        category: "return",
+        severity: "info",
+        actionUrl: "/admin?tab=disputes",
+        metadata: { returnRequestId: request._id, orderId: order._id },
+        dedupeKey: `return:${request._id}:requested:admin`
+      })
+    ]).catch((error) => console.error("Unable to create return notifications", error));
     res.status(201).json(request);
   })
 );
@@ -52,6 +76,17 @@ router.patch(
     if (req.body.status === "refunded") {
       await Transaction.updateMany({ orderId: request.orderId, sellerId: request.sellerId, status: "confirmed" }, { status: "refunded", notes: "Marked refunded from return request" });
     }
+    await createNotification({
+      userId: request.buyerId,
+      title: "Return status updated",
+      messageType: "return_status_updated",
+      message: `Your return request is now ${String(request.status).replaceAll("_", " ")}.`,
+      category: "return",
+      severity: request.status === "refunded" ? "success" : request.status === "rejected" ? "critical" : "info",
+      actionUrl: `/orders/${request.orderId}`,
+      metadata: { returnRequestId: request._id, orderId: request.orderId, status: request.status },
+      dedupeKey: `return:${request._id}:status:${request.status}:buyer`
+    }).catch((error) => console.error("Unable to create return status notification", error));
     res.json(request);
   })
 );

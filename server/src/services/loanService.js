@@ -5,14 +5,160 @@ const EMISchedule = require("../models/EMISchedule");
 const Transaction = require("../models/Transaction");
 const Order = require("../models/Order");
 const EMIApplication = require("../models/EMIApplication");
+const BuyerProfile = require("../models/BuyerProfile");
+const Shipment = require("../models/Shipment");
+const User = require("../models/User");
 const { calculateSchedule, roundMoney } = require("./emiService");
 const { writeAudit } = require("./auditService");
-const { convertReservationToSale } = require("./inventoryService");
+const { convertReservationToSale, writeInventoryEntry } = require("./inventoryService");
 const { ensureLoanAgreement } = require("./agreementService");
 const { calculateBuyerRiskProfile } = require("./riskService");
+const { createNotification, notifyLowStockProduct } = require("./notificationService");
+
+function formatMoney(value) {
+  return `BDT ${Number(value || 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+async function notifyConfirmedTransaction(transaction) {
+  if (!transaction) return;
+  try {
+    const isDownPayment = transaction.transactionType === "down_payment";
+    const actionUrl = transaction.loanId ? `/loans/${transaction.loanId}` : `/orders/${transaction.orderId}`;
+    await Promise.all([
+      createNotification({
+        userId: transaction.buyerId,
+        loanId: transaction.loanId,
+        title: isDownPayment ? "Down payment confirmed" : "EMI payment confirmed",
+        messageType: isDownPayment ? "down_payment_confirmed" : "installment_payment_confirmed",
+        message: `${formatMoney(transaction.amount)} was received successfully. Receipt: ${transaction.receiptNo}.`,
+        category: "payment",
+        severity: "success",
+        actionUrl,
+        metadata: {
+          transactionId: transaction._id,
+          receiptNo: transaction.receiptNo,
+          amount: transaction.amount,
+          method: transaction.method
+        },
+        dedupeKey: `transaction:${transaction._id}:buyer`
+      }),
+      createNotification({
+        userId: transaction.sellerId,
+        loanId: transaction.loanId,
+        title: isDownPayment ? "Down payment received" : "EMI collection received",
+        messageType: isDownPayment ? "down_payment_received" : "installment_payment_received",
+        message: `${formatMoney(transaction.amount)} was confirmed${isDownPayment ? ". The EMI product is ready for fulfillment" : ""}.`,
+        category: "payment",
+        severity: "success",
+        actionUrl: isDownPayment && transaction.orderId ? `/orders/${transaction.orderId}` : actionUrl,
+        metadata: {
+          buyerId: transaction.buyerId,
+          transactionId: transaction._id,
+          receiptNo: transaction.receiptNo,
+          amount: transaction.amount,
+          method: transaction.method
+        },
+        dedupeKey: `transaction:${transaction._id}:seller`
+      })
+    ]);
+  } catch (error) {
+    console.error("Unable to create payment notifications", error);
+  }
+}
 
 function buildReceiptNo(prefix = "R") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+function buildEmiOrderNo() {
+  return `EMI-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+async function ensureMarketplaceDeliveryOrder(loan, { session, readyForDelivery } = {}) {
+  if (loan.source !== "marketplace" || !loan.productId) return null;
+
+  let order = null;
+  if (loan.orderId) order = await Order.findById(loan.orderId).session(session || null);
+  if (!order) order = await Order.findOne({ "items.loanId": loan._id }).session(session || null);
+
+  if (order) {
+    const linkedItem = order.items.find((item) => item.loanId?.toString() === loan._id.toString());
+    loan.orderId = order._id;
+    if (linkedItem) loan.orderItemId = linkedItem._id;
+    await loan.save({ session });
+    await Shipment.findOneAndUpdate(
+      { orderId: order._id, sellerId: loan.sellerId },
+      { $setOnInsert: { orderId: order._id, sellerId: loan.sellerId, status: "pending" } },
+      { upsert: true, new: true, session }
+    );
+    return order;
+  }
+
+  const product = await Product.findById(loan.productId).session(session || null);
+  const buyer = await User.findById(loan.buyerId).select("name phone").session(session || null);
+  const buyerProfile = await BuyerProfile.findOne({ userId: loan.buyerId }).select("address").session(session || null);
+  if (!product || !buyer) {
+    const error = new Error("Cannot create the delivery order because its product or buyer no longer exists");
+    error.status = 409;
+    throw error;
+  }
+
+  const isReady = readyForDelivery ?? ["active", "closed"].includes(loan.status);
+  order = await Order.create(
+    [
+      {
+        orderNo: buildEmiOrderNo(),
+        buyerId: loan.buyerId,
+        sellerIds: [loan.sellerId],
+        items: [
+          {
+            productId: product._id,
+            sellerId: loan.sellerId,
+            name: product.name,
+            quantity: 1,
+            unitPrice: Number(loan.principal),
+            totalPrice: Number(loan.principal),
+            financeMode: "emi",
+            selectedColorName: loan.selectedColorName,
+            selectedColorHex: loan.selectedColorHex,
+            fulfillmentStatus: isReady ? "confirmed" : "pending",
+            loanId: loan._id
+          }
+        ],
+        subtotal: Number(loan.principal),
+        discount: 0,
+        deliveryCharge: 0,
+        total: Number(loan.principal),
+        paymentMode: "emi",
+        paymentStatus: isReady ? "partial" : "unpaid",
+        fulfillmentStatus: isReady ? "confirmed" : "pending",
+        shippingAddress: {
+          name: buyer.name,
+          phone: buyer.phone || "",
+          line1: buyerProfile?.address || "Address not provided - contact buyer",
+          line2: "",
+          city: "Not provided",
+          area: "",
+          postalCode: ""
+        }
+      }
+    ],
+    { session }
+  ).then((documents) => documents[0]);
+
+  loan.orderId = order._id;
+  loan.orderItemId = order.items[0]._id;
+  await loan.save({ session });
+  await Shipment.create([{ orderId: order._id, sellerId: loan.sellerId, status: "pending" }], { session });
+  await writeAudit(
+    loan.buyerId,
+    "legacyMarketplaceOrder.created",
+    "Order",
+    order._id,
+    { loanId: loan._id, readyForDelivery: isReady },
+    { session }
+  );
+  return order;
 }
 
 function getScheduleBalance(schedule) {
@@ -190,19 +336,30 @@ async function createLoanWithSchedule(payload, actorId, { requested = false } = 
       await ensureLoanAgreement(loan, { session });
     } else {
       await createApplicationForLoan(loan, session);
-      await recordDownPayment({
-        loan,
-        amount: Number(payload.downPayment || 0),
-        method: payload.downPaymentMethod || "mock_gateway",
-        actorId,
-        session,
-        notes: "Online EMI request down payment"
-      });
     }
 
     await writeAudit(actorId, requested ? "loan.requested" : "loan.created", "Loan", loan._id, { source: loan.source }, { session });
     await session.commitTransaction();
-    return Loan.findById(loan._id).populate("buyerId", "name email phone").populate("productId", "name price");
+    const populatedLoan = await Loan.findById(loan._id).populate("buyerId", "name email phone").populate("productId", "name price");
+    if (!requested) {
+      await createNotification({
+        userId: loan.buyerId,
+        loanId: loan._id,
+        title: "EMI loan activated",
+        messageType: "emi_loan_activated",
+        message: `Your EMI agreement for ${populatedLoan?.productId?.name || "the financed purchase"} is active.`,
+        category: "loan",
+        severity: "success",
+        actionUrl: `/loans/${loan._id}`,
+        metadata: { principal: loan.principal, tenureMonths: loan.tenureMonths },
+        dedupeKey: `loan:${loan._id}:activated`
+      }).catch((error) => console.error("Unable to create loan notification", error));
+      if (payload.productId) {
+        const product = await Product.findById(payload.productId);
+        await notifyLowStockProduct(product).catch((error) => console.error("Unable to create stock notification", error));
+      }
+    }
+    return populatedLoan;
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -218,46 +375,106 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
     const loan = await Loan.findOne({ _id: loanId, sellerId, status: "requested" }).session(session);
     if (!loan) throw new Error("Pending loan request not found");
 
-    const product = loan.productId ? await Product.findById(loan.productId).session(session) : null;
-    if (product) {
-      if (loan.orderId) {
-        const order = await Order.findById(loan.orderId).session(session);
-        const orderItem = order?.items.id(loan.orderItemId);
-        if (orderItem) {
-          await convertReservationToSale(product, orderItem.quantity, "Loan", loan._id, { session, note: `EMI approved for order ${order.orderNo}` });
-          orderItem.fulfillmentStatus = "confirmed";
-          orderItem.loanId = loan._id;
-          order.paymentStatus = "partial";
-          if (order.fulfillmentStatus === "pending") order.fulfillmentStatus = "confirmed";
-          await order.save({ session });
-        }
-      } else {
-        if (product.stock < 1) throw new Error("Product is out of stock");
-        product.stock -= 1;
-        await product.save({ session });
-      }
-    }
-
-    const result = calculateSchedule({
-      principal: loan.principal,
-      downPayment: loan.downPayment,
-      interestRate: loan.interestRate,
-      interestType: loan.interestType,
-      tenureMonths: loan.tenureMonths,
-      startDate: new Date()
-    });
-
-    loan.status = "active";
+    loan.status = "approved";
     loan.approvedAt = new Date();
-    loan.activatedAt = new Date();
     await loan.save({ session });
     const risk = await calculateBuyerRiskProfile({ buyerId: loan.buyerId, principal: loan.principal, downPayment: loan.downPayment, session });
     await EMIApplication.findOneAndUpdate(
       { loanId: loan._id },
-      { status: "converted_to_loan", riskScoreSnapshot: risk.riskScore, riskCategorySnapshot: risk.riskCategory },
+      { status: "approved", riskScoreSnapshot: risk.riskScore, riskCategorySnapshot: risk.riskCategory },
       { session }
     );
 
+    if (Number(loan.downPayment || 0) <= 0) {
+      await activateLoanRecords(loan, actorId, { session });
+    }
+
+    await writeAudit(
+      actorId,
+      Number(loan.downPayment || 0) > 0 ? "loan.approved.awaiting_down_payment" : "loan.approved.activated",
+      "Loan",
+      loan._id,
+      { downPayment: loan.downPayment },
+      { session }
+    );
+    await session.commitTransaction();
+    return Loan.findById(loan._id).populate("buyerId", "name email phone").populate("productId", "name price");
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
+}
+
+async function activateLoanRecords(loan, actorId, { session } = {}) {
+  const existingScheduleCount = await EMISchedule.countDocuments({ loanId: loan._id }).session(session || null);
+  if (existingScheduleCount > 0 && ["active", "closed"].includes(loan.status)) return loan;
+
+  const product = loan.productId ? await Product.findById(loan.productId).session(session || null) : null;
+  if (product) {
+    if (loan.orderId) {
+      const order = await Order.findById(loan.orderId).session(session || null);
+      const orderItem = order?.items.id(loan.orderItemId);
+      if (!order || !orderItem) {
+        const error = new Error("The order item linked to this EMI loan was not found");
+        error.status = 409;
+        throw error;
+      }
+      if (orderItem.fulfillmentStatus === "cancelled") {
+        const error = new Error("A cancelled EMI order cannot be activated");
+        error.status = 409;
+        throw error;
+      }
+
+      await convertReservationToSale(product, orderItem.quantity, "Loan", loan._id, {
+        session,
+        note: `EMI down payment confirmed for order ${order.orderNo}`
+      });
+      orderItem.fulfillmentStatus = "confirmed";
+      orderItem.loanId = loan._id;
+      order.paymentStatus = "partial";
+      if (order.items.every((item) => ["confirmed", "processing", "shipped", "delivered"].includes(item.fulfillmentStatus))) {
+        order.fulfillmentStatus = "confirmed";
+      }
+      await order.save({ session });
+    } else {
+      if (product.stock < 1) {
+        const error = new Error("Product is out of stock");
+        error.status = 409;
+        throw error;
+      }
+      product.stock -= 1;
+      await product.save({ session });
+      await writeInventoryEntry(
+        {
+          product,
+          type: "sale",
+          quantity: -1,
+          referenceType: "Loan",
+          referenceId: loan._id,
+          note: "Marketplace EMI activated after confirmed down payment"
+        },
+        { session }
+      );
+      await ensureMarketplaceDeliveryOrder(loan, { session, readyForDelivery: true });
+    }
+  }
+
+  const result = calculateSchedule({
+    principal: loan.principal,
+    downPayment: loan.downPayment,
+    interestRate: loan.interestRate,
+    interestType: loan.interestType,
+    tenureMonths: loan.tenureMonths,
+    startDate: new Date()
+  });
+
+  loan.status = "active";
+  loan.activatedAt = new Date();
+  await loan.save({ session });
+
+  if (existingScheduleCount === 0) {
     await EMISchedule.insertMany(
       result.schedule.map((row) => ({
         ...row,
@@ -267,11 +484,90 @@ async function approveLoanRequest(loanId, sellerId, actorId) {
       })),
       { session }
     );
-    await ensureLoanAgreement(loan, { session });
+  }
+  await EMIApplication.findOneAndUpdate({ loanId: loan._id }, { status: "converted_to_loan" }, { session });
+  await ensureLoanAgreement(loan, { session });
+  await writeAudit(actorId, "loan.activated", "Loan", loan._id, { orderId: loan.orderId }, { session });
+  return loan;
+}
 
-    await writeAudit(actorId, "loan.approved", "Loan", loan._id, {}, { session });
+async function activateApprovedLoanAfterDownPayment(
+  { loanId, buyerId, amount, method = "stripe", gatewayRef, notes = "EMI down payment" },
+  actorId
+) {
+  if (gatewayRef) {
+    const existing = await Transaction.findOne({ gatewayRef });
+    if (existing) {
+      await notifyConfirmedTransaction(existing);
+      return existing;
+    }
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const loan = await Loan.findOne({ _id: loanId, buyerId }).session(session);
+    if (!loan) {
+      const error = new Error("Approved EMI loan not found for this buyer");
+      error.status = 404;
+      throw error;
+    }
+    if (loan.status !== "approved") {
+      const existing = gatewayRef ? await Transaction.findOne({ gatewayRef }).session(session) : null;
+      if (existing) {
+        await session.commitTransaction();
+        return existing;
+      }
+      const error = new Error("This EMI loan is not waiting for a down payment");
+      error.status = 409;
+      throw error;
+    }
+
+    const requiredAmount = roundMoney(Number(loan.downPayment || 0));
+    const paidAmount = roundMoney(Number(amount || 0));
+    if (requiredAmount < 1 || paidAmount !== requiredAmount) {
+      const error = new Error(`The required down payment is BDT ${Math.round(requiredAmount)}`);
+      error.status = 400;
+      throw error;
+    }
+
+    const transaction = await Transaction.create(
+      [
+        {
+          loanId: loan._id,
+          orderId: loan.orderId,
+          transactionType: "down_payment",
+          buyerId: loan.buyerId,
+          sellerId: loan.sellerId,
+          amount: paidAmount,
+          method,
+          paymentDate: new Date(),
+          gatewayRef,
+          receiptNo: buildReceiptNo("DP"),
+          recordedBy: actorId,
+          notes,
+          status: "confirmed"
+        }
+      ],
+      { session }
+    ).then((docs) => docs[0]);
+
+    await activateLoanRecords(loan, actorId, { session });
+    await writeAudit(
+      actorId,
+      "downPayment.confirmed",
+      "Transaction",
+      transaction._id,
+      { loanId: loan._id, amount: paidAmount, method },
+      { session }
+    );
     await session.commitTransaction();
-    return Loan.findById(loan._id).populate("buyerId", "name email phone").populate("productId", "name price");
+    await notifyConfirmedTransaction(transaction);
+    if (loan.productId) {
+      const product = await Product.findById(loan.productId);
+      await notifyLowStockProduct(product).catch((error) => console.error("Unable to create stock notification", error));
+    }
+    return transaction;
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -319,6 +615,7 @@ async function recordPayment(
     }
 
     let lastScheduleId = allocationSchedules[0]._id;
+    const allocations = [];
     for (const schedule of allocationSchedules) {
       if (remaining <= 0) break;
       const due = getScheduleBalance(schedule);
@@ -327,6 +624,13 @@ async function recordPayment(
       schedule.status = schedule.amountPaid >= roundMoney(schedule.amountDue + schedule.lateFee) ? "paid" : "partial";
       if (schedule.status === "paid") schedule.paidAt = paymentDate || new Date();
       await schedule.save({ session });
+      if (applied > 0) {
+        allocations.push({
+          scheduleId: schedule._id,
+          installmentNo: schedule.installmentNo,
+          amount: applied
+        });
+      }
       remaining = roundMoney(remaining - applied);
       lastScheduleId = schedule._id;
     }
@@ -345,6 +649,7 @@ async function recordPayment(
           paymentDate: paymentDate || new Date(),
           gatewayRef,
           receiptNo,
+          allocations,
           recordedBy: actorId,
           notes,
           status: "confirmed"
@@ -361,6 +666,7 @@ async function recordPayment(
 
     await writeAudit(actorId, "payment.recorded", "Transaction", transaction._id, { loanId, amount, method }, { session });
     await session.commitTransaction();
+    await notifyConfirmedTransaction(transaction);
     return transaction;
   } catch (error) {
     await session.abortTransaction();
@@ -371,12 +677,16 @@ async function recordPayment(
 }
 
 module.exports = {
+  activateApprovedLoanAfterDownPayment,
+  activateLoanRecords,
   buildReceiptNo,
   createApplicationForLoan,
   createLoanWithSchedule,
   approveLoanRequest,
+  ensureMarketplaceDeliveryOrder,
   getPaymentAllocationPreview,
   recordDownPayment,
   recordPayment,
-  selectPaymentAllocationSchedules
+  selectPaymentAllocationSchedules,
+  notifyConfirmedTransaction
 };

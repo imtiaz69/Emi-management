@@ -138,7 +138,7 @@ export default function ProductDetails() {
       <div className="product-detail-layout">
         <section className="panel">
           {productImages[activeImageIndex]?.path ? (
-            <button className="product-detail-image-button" type="button" onClick={() => setGalleryOpen(true)}>
+            <button className="product-detail-image-button" type="button" onClick={() => setGalleryOpen(true)} aria-label={`Open image gallery for ${product.name}`}>
               <img className="product-detail-image" src={productImages[activeImageIndex].path} alt={product.name} />
             </button>
           ) : (
@@ -146,7 +146,7 @@ export default function ProductDetails() {
           )}
           <div className="image-preview-row">
             {productImages.map((image, index) => (
-              <button className={`image-preview image-preview-button ${activeImageIndex === index ? "active" : ""}`} type="button" key={image.path} onClick={() => setActiveImageIndex(index)}>
+              <button className={`image-preview image-preview-button ${activeImageIndex === index ? "active" : ""}`} type="button" key={image.path} onClick={() => setActiveImageIndex(index)} aria-label={`Show image ${index + 1} of ${product.name}`}>
                 <img src={image.path} alt={product.name} />
               </button>
             ))}

@@ -6,7 +6,6 @@ const {
   cancelOrder,
   getOrderForUser,
   listOrdersForUser,
-  markOrderPaid,
   updateOrderFulfillment
 } = require("../services/orderService");
 const { checkoutFromCart } = require("../services/checkoutService");
@@ -59,10 +58,6 @@ const fulfillmentSchema = z.object({
   trackingNo: z.string().trim().max(100).optional().default(""),
   shipmentStatus: z.enum(["pending", "packed", "shipped", "delivered", "failed"]).optional()
 });
-const paySchema = z.object({
-  method: z.enum(["mock_gateway", "cash"]).optional().default("mock_gateway")
-});
-
 router.post(
   "/from-cart",
   authorize("buyer"),
@@ -94,15 +89,6 @@ router.patch(
   "/:id/cancel",
   asyncHandler(async (req, res) => {
     res.json(await cancelOrder(req.params.id, req.user));
-  })
-);
-
-router.patch(
-  "/:id/pay-mock",
-  authorize("buyer"),
-  validateBody(paySchema),
-  asyncHandler(async (req, res) => {
-    res.json(await markOrderPaid(req.params.id, req.user, req.body.method));
   })
 );
 

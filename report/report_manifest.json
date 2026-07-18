@@ -1,0 +1,914 @@
+{
+  "output": "/home/imtiaz/Emi management/EMI_Management_and_Loan_Tracking_Final_Report_4-2.docx",
+  "toc": [
+    {
+      "key": "ch1",
+      "level": 1,
+      "title": "Chapter 1: Introduction"
+    },
+    {
+      "key": "s1_1",
+      "level": 2,
+      "title": "1.1 Project Context"
+    },
+    {
+      "key": "s1_2",
+      "level": 2,
+      "title": "1.2 Motivation"
+    },
+    {
+      "key": "s1_3",
+      "level": 2,
+      "title": "1.3 Contribution to Society"
+    },
+    {
+      "key": "s1_4",
+      "level": 2,
+      "title": "1.4 Expected Outcome"
+    },
+    {
+      "key": "s1_5",
+      "level": 2,
+      "title": "1.5 Product Usability"
+    },
+    {
+      "key": "s1_6",
+      "level": 2,
+      "title": "1.6 Organization of the Report"
+    },
+    {
+      "key": "ch2",
+      "level": 1,
+      "title": "Chapter 2: Background Study"
+    },
+    {
+      "key": "s2_1",
+      "level": 2,
+      "title": "2.1 Problem Statement"
+    },
+    {
+      "key": "s2_2",
+      "level": 2,
+      "title": "2.2 Objectives"
+    },
+    {
+      "key": "s2_3",
+      "level": 2,
+      "title": "2.3 Existing Practice"
+    },
+    {
+      "key": "s2_4",
+      "level": 2,
+      "title": "2.4 Target Users and Stakeholders"
+    },
+    {
+      "key": "s2_5",
+      "level": 2,
+      "title": "2.5 Scope and Limitations"
+    },
+    {
+      "key": "s2_6",
+      "level": 2,
+      "title": "2.6 Gap Analysis"
+    },
+    {
+      "key": "s2_7",
+      "level": 2,
+      "title": "2.7 Technology Overview"
+    },
+    {
+      "key": "ch3",
+      "level": 1,
+      "title": "Chapter 3: Related Works"
+    },
+    {
+      "key": "s3_1",
+      "level": 2,
+      "title": "3.1 Comparable Systems"
+    },
+    {
+      "key": "s3_2",
+      "level": 2,
+      "title": "3.2 Comparative Analysis"
+    },
+    {
+      "key": "s3_3",
+      "level": 2,
+      "title": "3.3 Position of the Proposed System"
+    },
+    {
+      "key": "ch4",
+      "level": 1,
+      "title": "Chapter 4: Requirement Analysis"
+    },
+    {
+      "key": "s4_1",
+      "level": 2,
+      "title": "4.1 Requirement Elicitation"
+    },
+    {
+      "key": "s4_2",
+      "level": 2,
+      "title": "4.2 Functional Requirements"
+    },
+    {
+      "key": "s4_3",
+      "level": 2,
+      "title": "4.3 Non-functional Requirements"
+    },
+    {
+      "key": "s4_4",
+      "level": 2,
+      "title": "4.4 Use-case Model"
+    },
+    {
+      "key": "s4_5",
+      "level": 2,
+      "title": "4.5 Activity Models"
+    },
+    {
+      "key": "s4_6",
+      "level": 2,
+      "title": "4.6 Data-flow Models"
+    },
+    {
+      "key": "s4_7",
+      "level": 2,
+      "title": "4.7 Requirement Traceability"
+    },
+    {
+      "key": "ch5",
+      "level": 1,
+      "title": "Chapter 5: System Design"
+    },
+    {
+      "key": "s5_1",
+      "level": 2,
+      "title": "5.1 Architectural Design"
+    },
+    {
+      "key": "s5_2",
+      "level": 2,
+      "title": "5.2 Frontend Design"
+    },
+    {
+      "key": "s5_3",
+      "level": 2,
+      "title": "5.3 Backend Design"
+    },
+    {
+      "key": "s5_4",
+      "level": 2,
+      "title": "5.4 Database Design"
+    },
+    {
+      "key": "s5_5",
+      "level": 2,
+      "title": "5.5 Security Design"
+    },
+    {
+      "key": "s5_6",
+      "level": 2,
+      "title": "5.6 EMI and Payment Design"
+    },
+    {
+      "key": "s5_7",
+      "level": 2,
+      "title": "5.7 Deployment Design"
+    },
+    {
+      "key": "ch6",
+      "level": 1,
+      "title": "Chapter 6: Development and Deployment"
+    },
+    {
+      "key": "s6_1",
+      "level": 2,
+      "title": "6.1 Development Environment"
+    },
+    {
+      "key": "s6_2",
+      "level": 2,
+      "title": "6.2 Frontend Implementation"
+    },
+    {
+      "key": "s6_3",
+      "level": 2,
+      "title": "6.3 Backend Implementation"
+    },
+    {
+      "key": "s6_4",
+      "level": 2,
+      "title": "6.4 Ecommerce and EMI Workflows"
+    },
+    {
+      "key": "s6_5",
+      "level": 2,
+      "title": "6.5 Authentication, KYC, and Security"
+    },
+    {
+      "key": "s6_6",
+      "level": 2,
+      "title": "6.6 Reporting and Automation"
+    },
+    {
+      "key": "s6_7",
+      "level": 2,
+      "title": "6.7 Local Deployment"
+    },
+    {
+      "key": "s6_8",
+      "level": 2,
+      "title": "6.8 Proposed Production Deployment"
+    },
+    {
+      "key": "ch7",
+      "level": 1,
+      "title": "Chapter 7: Testing"
+    },
+    {
+      "key": "s7_1",
+      "level": 2,
+      "title": "7.1 Test Strategy"
+    },
+    {
+      "key": "s7_2",
+      "level": 2,
+      "title": "7.2 Unit Testing"
+    },
+    {
+      "key": "s7_3",
+      "level": 2,
+      "title": "7.3 Build Verification"
+    },
+    {
+      "key": "s7_4",
+      "level": 2,
+      "title": "7.4 Browser and Functional Verification"
+    },
+    {
+      "key": "s7_5",
+      "level": 2,
+      "title": "7.5 Test Results"
+    },
+    {
+      "key": "s7_6",
+      "level": 2,
+      "title": "7.6 Remaining Test Gaps"
+    },
+    {
+      "key": "ch8",
+      "level": 1,
+      "title": "Chapter 8: Quality Assurance"
+    },
+    {
+      "key": "s8_1",
+      "level": 2,
+      "title": "8.1 Quality Model"
+    },
+    {
+      "key": "s8_2",
+      "level": 2,
+      "title": "8.2 Functional Correctness"
+    },
+    {
+      "key": "s8_3",
+      "level": 2,
+      "title": "8.3 Security Assurance"
+    },
+    {
+      "key": "s8_4",
+      "level": 2,
+      "title": "8.4 Usability and Accessibility"
+    },
+    {
+      "key": "s8_5",
+      "level": 2,
+      "title": "8.5 Performance and Reliability"
+    },
+    {
+      "key": "s8_6",
+      "level": 2,
+      "title": "8.6 Maintainability"
+    },
+    {
+      "key": "s8_7",
+      "level": 2,
+      "title": "8.7 Quality Findings"
+    },
+    {
+      "key": "ch9",
+      "level": 1,
+      "title": "Chapter 9: Software Reengineering"
+    },
+    {
+      "key": "s9_1",
+      "level": 2,
+      "title": "9.1 Need for Reengineering"
+    },
+    {
+      "key": "s9_2",
+      "level": 2,
+      "title": "9.2 Architectural Evolution"
+    },
+    {
+      "key": "s9_3",
+      "level": 2,
+      "title": "9.3 Data and Workflow Reengineering"
+    },
+    {
+      "key": "s9_4",
+      "level": 2,
+      "title": "9.4 Security Reengineering"
+    },
+    {
+      "key": "s9_5",
+      "level": 2,
+      "title": "9.5 Interface Reengineering"
+    },
+    {
+      "key": "s9_6",
+      "level": 2,
+      "title": "9.6 Outcomes and Tradeoffs"
+    },
+    {
+      "key": "ch10",
+      "level": 1,
+      "title": "Chapter 10: Discussion"
+    },
+    {
+      "key": "s10_1",
+      "level": 2,
+      "title": "10.1 Achievement of Objectives"
+    },
+    {
+      "key": "s10_2",
+      "level": 2,
+      "title": "10.2 Practical Significance"
+    },
+    {
+      "key": "s10_3",
+      "level": 2,
+      "title": "10.3 Technical Tradeoffs"
+    },
+    {
+      "key": "s10_4",
+      "level": 2,
+      "title": "10.4 Limitations"
+    },
+    {
+      "key": "s10_5",
+      "level": 2,
+      "title": "10.5 Lessons Learned"
+    },
+    {
+      "key": "ch11",
+      "level": 1,
+      "title": "Chapter 11: Future Plan"
+    },
+    {
+      "key": "s11_1",
+      "level": 2,
+      "title": "11.1 Near-term Improvements"
+    },
+    {
+      "key": "s11_2",
+      "level": 2,
+      "title": "11.2 Production Integrations"
+    },
+    {
+      "key": "s11_3",
+      "level": 2,
+      "title": "11.3 Analytics and Credit Intelligence"
+    },
+    {
+      "key": "s11_4",
+      "level": 2,
+      "title": "11.4 Accessibility and Mobile Expansion"
+    },
+    {
+      "key": "s11_5",
+      "level": 2,
+      "title": "11.5 Roadmap"
+    },
+    {
+      "key": "ch12",
+      "level": 1,
+      "title": "Chapter 12: Conclusion"
+    },
+    {
+      "key": "references",
+      "level": 1,
+      "title": "References"
+    },
+    {
+      "key": "appendix_a",
+      "level": 1,
+      "title": "Appendix A: Selected API Matrix"
+    },
+    {
+      "key": "appendix_b",
+      "level": 1,
+      "title": "Appendix B: Test and Verification Matrix"
+    },
+    {
+      "key": "appendix_c",
+      "level": 1,
+      "title": "Appendix C: Installation and Demonstration Guide"
+    }
+  ],
+  "headings": [
+    {
+      "key": "ch1",
+      "title": "Introduction"
+    },
+    {
+      "key": "s1_1",
+      "title": "1.1 Project Context"
+    },
+    {
+      "key": "s1_2",
+      "title": "1.2 Motivation"
+    },
+    {
+      "key": "s1_3",
+      "title": "1.3 Contribution to Society"
+    },
+    {
+      "key": "s1_4",
+      "title": "1.4 Expected Outcome"
+    },
+    {
+      "key": "s1_5",
+      "title": "1.5 Product Usability"
+    },
+    {
+      "key": "s1_6",
+      "title": "1.6 Organization of the Report"
+    },
+    {
+      "key": "ch2",
+      "title": "Background Study"
+    },
+    {
+      "key": "s2_1",
+      "title": "2.1 Problem Statement"
+    },
+    {
+      "key": "s2_2",
+      "title": "2.2 Objectives"
+    },
+    {
+      "key": "s2_3",
+      "title": "2.3 Existing Practice"
+    },
+    {
+      "key": "s2_4",
+      "title": "2.4 Target Users and Stakeholders"
+    },
+    {
+      "key": "s2_5",
+      "title": "2.5 Scope and Limitations"
+    },
+    {
+      "key": "s2_6",
+      "title": "2.6 Gap Analysis"
+    },
+    {
+      "key": "s2_7",
+      "title": "2.7 Technology Overview"
+    },
+    {
+      "key": "ch3",
+      "title": "Related Works"
+    },
+    {
+      "key": "s3_1",
+      "title": "3.1 Comparable Systems"
+    },
+    {
+      "key": "s3_2",
+      "title": "3.2 Comparative Analysis"
+    },
+    {
+      "key": "s3_3",
+      "title": "3.3 Position of the Proposed System"
+    },
+    {
+      "key": "ch4",
+      "title": "Requirement Analysis"
+    },
+    {
+      "key": "s4_1",
+      "title": "4.1 Requirement Elicitation"
+    },
+    {
+      "key": "s4_2",
+      "title": "4.2 Functional Requirements"
+    },
+    {
+      "key": "s4_3",
+      "title": "4.3 Non-functional Requirements"
+    },
+    {
+      "key": "s4_4",
+      "title": "4.4 Use-case Model"
+    },
+    {
+      "key": "s4_5",
+      "title": "4.5 Activity Models"
+    },
+    {
+      "key": "s4_6",
+      "title": "4.6 Data-flow Models"
+    },
+    {
+      "key": "s4_7",
+      "title": "4.7 Requirement Traceability"
+    },
+    {
+      "key": "ch5",
+      "title": "System Design"
+    },
+    {
+      "key": "s5_1",
+      "title": "5.1 Architectural Design"
+    },
+    {
+      "key": "s5_2",
+      "title": "5.2 Frontend Design"
+    },
+    {
+      "key": "s5_3",
+      "title": "5.3 Backend Design"
+    },
+    {
+      "key": "s5_4",
+      "title": "5.4 Database Design"
+    },
+    {
+      "key": "s5_5",
+      "title": "5.5 Security Design"
+    },
+    {
+      "key": "s5_6",
+      "title": "5.6 EMI and Payment Design"
+    },
+    {
+      "key": "s5_7",
+      "title": "5.7 Deployment Design"
+    },
+    {
+      "key": "ch6",
+      "title": "Development and Deployment"
+    },
+    {
+      "key": "s6_1",
+      "title": "6.1 Development Environment"
+    },
+    {
+      "key": "s6_2",
+      "title": "6.2 Frontend Implementation"
+    },
+    {
+      "key": "s6_3",
+      "title": "6.3 Backend Implementation"
+    },
+    {
+      "key": "s6_4",
+      "title": "6.4 Ecommerce and EMI Workflows"
+    },
+    {
+      "key": "s6_5",
+      "title": "6.5 Authentication, KYC, and Security"
+    },
+    {
+      "key": "s6_6",
+      "title": "6.6 Reporting and Automation"
+    },
+    {
+      "key": "s6_7",
+      "title": "6.7 Local Deployment"
+    },
+    {
+      "key": "s6_8",
+      "title": "6.8 Proposed Production Deployment"
+    },
+    {
+      "key": "ch7",
+      "title": "Testing"
+    },
+    {
+      "key": "s7_1",
+      "title": "7.1 Test Strategy"
+    },
+    {
+      "key": "s7_2",
+      "title": "7.2 Unit Testing"
+    },
+    {
+      "key": "s7_3",
+      "title": "7.3 Build Verification"
+    },
+    {
+      "key": "s7_4",
+      "title": "7.4 Browser and Functional Verification"
+    },
+    {
+      "key": "s7_5",
+      "title": "7.5 Test Results"
+    },
+    {
+      "key": "s7_6",
+      "title": "7.6 Remaining Test Gaps"
+    },
+    {
+      "key": "ch8",
+      "title": "Quality Assurance"
+    },
+    {
+      "key": "s8_1",
+      "title": "8.1 Quality Model"
+    },
+    {
+      "key": "s8_2",
+      "title": "8.2 Functional Correctness"
+    },
+    {
+      "key": "s8_3",
+      "title": "8.3 Security Assurance"
+    },
+    {
+      "key": "s8_4",
+      "title": "8.4 Usability and Accessibility"
+    },
+    {
+      "key": "s8_5",
+      "title": "8.5 Performance and Reliability"
+    },
+    {
+      "key": "s8_6",
+      "title": "8.6 Maintainability"
+    },
+    {
+      "key": "s8_7",
+      "title": "8.7 Quality Findings"
+    },
+    {
+      "key": "ch9",
+      "title": "Software Reengineering"
+    },
+    {
+      "key": "s9_1",
+      "title": "9.1 Need for Reengineering"
+    },
+    {
+      "key": "s9_2",
+      "title": "9.2 Architectural Evolution"
+    },
+    {
+      "key": "s9_3",
+      "title": "9.3 Data and Workflow Reengineering"
+    },
+    {
+      "key": "s9_4",
+      "title": "9.4 Security Reengineering"
+    },
+    {
+      "key": "s9_5",
+      "title": "9.5 Interface Reengineering"
+    },
+    {
+      "key": "s9_6",
+      "title": "9.6 Outcomes and Tradeoffs"
+    },
+    {
+      "key": "ch10",
+      "title": "Discussion"
+    },
+    {
+      "key": "s10_1",
+      "title": "10.1 Achievement of Objectives"
+    },
+    {
+      "key": "s10_2",
+      "title": "10.2 Practical Significance"
+    },
+    {
+      "key": "s10_3",
+      "title": "10.3 Technical Tradeoffs"
+    },
+    {
+      "key": "s10_4",
+      "title": "10.4 Limitations"
+    },
+    {
+      "key": "s10_5",
+      "title": "10.5 Lessons Learned"
+    },
+    {
+      "key": "ch11",
+      "title": "Future Plan"
+    },
+    {
+      "key": "s11_1",
+      "title": "11.1 Near-term Improvements"
+    },
+    {
+      "key": "s11_2",
+      "title": "11.2 Production Integrations"
+    },
+    {
+      "key": "s11_3",
+      "title": "11.3 Analytics and Credit Intelligence"
+    },
+    {
+      "key": "s11_4",
+      "title": "11.4 Accessibility and Mobile Expansion"
+    },
+    {
+      "key": "s11_5",
+      "title": "11.5 Roadmap"
+    },
+    {
+      "key": "ch12",
+      "title": "Conclusion"
+    },
+    {
+      "key": "references",
+      "title": "References"
+    },
+    {
+      "key": "appendix_a",
+      "title": "Appendix A: Selected API Matrix"
+    },
+    {
+      "key": "appendix_b",
+      "title": "Appendix B: Test and Verification Matrix"
+    },
+    {
+      "key": "appendix_c",
+      "title": "Appendix C: Installation and Demonstration Guide"
+    }
+  ],
+  "figures": [
+    {
+      "key": "figure_4_1",
+      "caption": "Figure 4.1: FinanceLend use-case model"
+    },
+    {
+      "key": "figure_4_2",
+      "caption": "Figure 4.2: Offline EMI sale activity"
+    },
+    {
+      "key": "figure_4_3",
+      "caption": "Figure 4.3: Online ecommerce and EMI activity"
+    },
+    {
+      "key": "figure_4_4",
+      "caption": "Figure 4.4: DFD Level 0 system context"
+    },
+    {
+      "key": "figure_4_5",
+      "caption": "Figure 4.5: DFD Level 1 major processes and data stores"
+    },
+    {
+      "key": "figure_5_1",
+      "caption": "Figure 5.1: Three-tier modular monolith architecture"
+    },
+    {
+      "key": "figure_5_2",
+      "caption": "Figure 5.2: Core MongoDB collection relationships"
+    },
+    {
+      "key": "figure_5_3",
+      "caption": "Figure 5.3: Verified local and proposed production deployment"
+    },
+    {
+      "key": "figure_6_1",
+      "caption": "Figure 6.1: FinanceLend public home page on a desktop viewport"
+    },
+    {
+      "key": "figure_6_2",
+      "caption": "Figure 6.2: Searchable marketplace and EMI-ready product catalogue"
+    },
+    {
+      "key": "figure_6_3",
+      "caption": "Figure 6.3: Buyer cart with cash and EMI product selections"
+    },
+    {
+      "key": "figure_6_4",
+      "caption": "Figure 6.4: Checkout with shipping information and per-item EMI terms"
+    },
+    {
+      "key": "figure_6_5",
+      "caption": "Figure 6.5: Buyer dashboard overview and readiness information"
+    },
+    {
+      "key": "figure_6_7",
+      "caption": "Figure 6.7: Buyer EMI loans, allocation choices, and payment actions"
+    },
+    {
+      "key": "figure_6_8",
+      "caption": "Figure 6.8: Seller dashboard metrics, collections, overdue exposure, and risk"
+    },
+    {
+      "key": "figure_6_6",
+      "caption": "Figure 6.6: Buyer KYC upload and protected-document status"
+    },
+    {
+      "key": "figure_6_10",
+      "caption": "Figure 6.10: Administrator governance view with KYC and platform controls"
+    },
+    {
+      "key": "figure_6_9",
+      "caption": "Figure 6.9: Seller sales, portfolio, order, and payment-method reports"
+    },
+    {
+      "key": "figure_6_11",
+      "caption": "Figure 6.11: Responsive home and marketplace views at 390 by 844 pixels"
+    },
+    {
+      "key": "figure_9_1",
+      "caption": "Figure 9.1: Reengineering from 4-1 design to 4-2 implementation"
+    }
+  ],
+  "tables": [
+    {
+      "key": "table_2_1",
+      "caption": "Table 2.1: Problem-to-response gap analysis"
+    },
+    {
+      "key": "table_3_1",
+      "caption": "Table 3.1: Comparison with related systems"
+    },
+    {
+      "key": "table_4_1",
+      "caption": "Table 4.1: Functional requirements"
+    },
+    {
+      "key": "table_4_2",
+      "caption": "Table 4.2: Non-functional requirements"
+    },
+    {
+      "key": "table_4_3",
+      "caption": "Table 4.3: Requirement traceability"
+    },
+    {
+      "key": "table_5_1",
+      "caption": "Table 5.1: Implemented technology stack"
+    },
+    {
+      "key": "table_5_2",
+      "caption": "Table 5.2: Core data groups"
+    },
+    {
+      "key": "table_6_1",
+      "caption": "Table 6.1: Repository implementation inventory"
+    },
+    {
+      "key": "table_6_2",
+      "caption": "Table 6.2: Environment configuration"
+    },
+    {
+      "key": "table_7_1",
+      "caption": "Table 7.1: Automated unit-test results"
+    },
+    {
+      "key": "table_7_2",
+      "caption": "Table 7.2: Browser verification results"
+    },
+    {
+      "key": "table_8_1",
+      "caption": "Table 8.1: Quality assurance evaluation"
+    },
+    {
+      "key": "table_8_2",
+      "caption": "Table 8.2: Open quality findings"
+    },
+    {
+      "key": "table_9_1",
+      "caption": "Table 9.1: Reengineering changes"
+    },
+    {
+      "key": "table_10_1",
+      "caption": "Table 10.1: Objective achievement"
+    },
+    {
+      "key": "table_11_1",
+      "caption": "Table 11.1: Future roadmap"
+    },
+    {
+      "key": "table_A_1",
+      "caption": "Table A.1: Selected REST API matrix"
+    },
+    {
+      "key": "table_B_1",
+      "caption": "Table B.1: Detailed verification matrix"
+    },
+    {
+      "key": "table_C_1",
+      "caption": "Table C.1: Seeded demonstration accounts"
+    }
+  ]
+}

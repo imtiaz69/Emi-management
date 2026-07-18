@@ -1,7 +1,25 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
+import {
+  BadgeDollarSign,
+  Bell,
+  ClipboardCheck,
+  LayoutDashboard,
+  PackageSearch,
+  RefreshCcw,
+  Scale,
+  ScrollText,
+  Settings2,
+  ShieldCheck,
+  ShoppingCart,
+  Store,
+  Users
+} from "lucide-react";
 import { api } from "../api/http";
+import DashboardShell from "../components/DashboardShell.jsx";
+import NotificationInbox from "../components/NotificationInbox.jsx";
 import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
 import ProtectedImage from "../components/ProtectedImage.jsx";
 import StatCard from "../components/StatCard.jsx";
@@ -9,8 +27,31 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import { formatKycType } from "../utils/kyc.js";
 import { notifyError, notifySuccess } from "../utils/toast.js";
 
+const adminTabs = [
+  { key: "overview", label: "Overview", icon: LayoutDashboard, group: "Workspace" },
+  { key: "notifications", label: "Notifications", icon: Bell, group: "Workspace" },
+  { key: "sellerApprovals", label: "Seller approvals", icon: Store, group: "Governance" },
+  { key: "kycReview", label: "KYC review", icon: ShieldCheck, group: "Governance" },
+  { key: "users", label: "Users", icon: Users, group: "Governance" },
+  { key: "products", label: "Products", icon: PackageSearch, group: "Commerce" },
+  { key: "orders", label: "Orders", icon: ShoppingCart, group: "Commerce" },
+  { key: "portfolio", label: "EMI portfolio", icon: BadgeDollarSign, group: "Finance" },
+  { key: "disputes", label: "Disputes & returns", icon: Scale, group: "Finance" },
+  { key: "settings", label: "System settings", icon: Settings2, group: "System" },
+  { key: "audit", label: "Audit trail", icon: ScrollText, group: "System" }
+];
+
+const adminTabKeys = new Set(adminTabs.map((tab) => tab.key));
+
+function getInitialAdminTab(search) {
+  const tab = new URLSearchParams(search).get("tab");
+  return adminTabKeys.has(tab) ? tab : "overview";
+}
+
 export default function AdminPanel() {
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState(() => getInitialAdminTab(location.search));
   const [sellerReason, setSellerReason] = useState("Incomplete business information");
   const [settingsForm, setSettingsForm] = useState(null);
   const overview = useQuery({ queryKey: ["admin-overview"], queryFn: async () => (await api.get("/admin/overview")).data });
@@ -24,6 +65,10 @@ export default function AdminPanel() {
   const disputes = useQuery({ queryKey: ["admin-disputes"], queryFn: async () => (await api.get("/admin/disputes")).data });
   const returns = useQuery({ queryKey: ["admin-returns"], queryFn: async () => (await api.get("/admin/returns")).data });
   const settings = useQuery({ queryKey: ["admin-settings"], queryFn: async () => (await api.get("/admin/settings")).data });
+
+  useEffect(() => {
+    setActiveTab(getInitialAdminTab(location.search));
+  }, [location.search]);
 
   useEffect(() => {
     if (settings.data) setSettingsForm(settings.data);
@@ -110,22 +155,48 @@ export default function AdminPanel() {
   }
 
   return (
-    <section className="dashboard">
-      <div className="page-title">
-        <div>
-          <h1>Admin Panel</h1>
-          <p>Approve sellers, inspect platform users, and review accountability logs.</p>
-        </div>
-      </div>
-      <div className="stats-grid">
-        <StatCard label="Users" value={overview.data?.users ?? 0} />
-        <StatCard label="Pending sellers" value={overview.data?.sellersPending ?? 0} tone="purple" />
-        <StatCard label="Pending products" value={overview.data?.productsPending ?? 0} />
-        <StatCard label="Active loans" value={overview.data?.activeLoans ?? 0} tone="green" />
-        <StatCard label="Orders" value={overview.data?.orders ?? 0} tone="green" />
-        <StatCard label="Open disputes" value={overview.data?.disputes ?? 0} tone="red" />
-      </div>
-      <div className="work-grid">
+    <DashboardShell
+      title={adminTabs.find((tab) => tab.key === activeTab)?.label || "Admin Panel"}
+      description="Review governance, lending operations, commerce activity, and system accountability."
+      roleLabel="Admin Workspace"
+      tabs={adminTabs}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      headerActions={<button className="button secondary" type="button" onClick={refresh}><RefreshCcw size={16} /> Refresh</button>}
+    >
+      {activeTab === "overview" && (
+        <>
+          <div className="stats-grid">
+            <StatCard label="Users" value={overview.data?.users ?? 0} />
+            <StatCard label="Pending sellers" value={overview.data?.sellersPending ?? 0} tone="purple" />
+            <StatCard label="Pending products" value={overview.data?.productsPending ?? 0} />
+            <StatCard label="Active loans" value={overview.data?.activeLoans ?? 0} tone="green" />
+            <StatCard label="Orders" value={overview.data?.orders ?? 0} tone="green" />
+            <StatCard label="Open disputes" value={overview.data?.disputes ?? 0} tone="red" />
+          </div>
+          <div className="work-grid">
+            <section className="panel">
+              <h2><ClipboardCheck size={18} /> Operational attention</h2>
+              <div className="list-stack">
+                <div className="list-row"><div><strong>Seller registrations</strong><span>Businesses waiting for an admin decision</span></div><span className="badge pending">{pending.data?.length || 0}</span></div>
+                <div className="list-row"><div><strong>KYC documents</strong><span>Buyer verification files waiting for review</span></div><span className="badge pending">{pendingKyc.data?.length || 0}</span></div>
+                <div className="list-row"><div><strong>Product moderation</strong><span>Products currently awaiting platform approval</span></div><span className="badge pending">{overview.data?.productsPending ?? 0}</span></div>
+              </div>
+            </section>
+            <section className="panel">
+              <h2>Recent accountability activity</h2>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Time</th><th>Actor</th><th>Action</th></tr></thead>
+                  <tbody>{(audit.data || []).slice(0, 6).map((log) => <tr key={log._id}><td>{dayjs(log.createdAt).format("DD MMM HH:mm")}</td><td>{log.actorId?.name || "System"}</td><td>{log.action}</td></tr>)}</tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </>
+      )}
+
+      {activeTab === "sellerApprovals" && (
         <section className="panel">
           <h2>Pending seller registrations</h2>
           <label>Decision reason
@@ -145,6 +216,9 @@ export default function AdminPanel() {
             {pending.data?.length === 0 && <p className="hint">No pending sellers.</p>}
           </div>
         </section>
+      )}
+
+      {activeTab === "kycReview" && (
         <section className="panel">
           <h2>KYC Review</h2>
           <div className="table-wrap">
@@ -186,7 +260,9 @@ export default function AdminPanel() {
             </table>
           </div>
         </section>
+      )}
 
+      {activeTab === "users" && (
         <section className="panel">
           <h2>Users</h2>
           <div className="table-wrap">
@@ -196,9 +272,9 @@ export default function AdminPanel() {
             </table>
           </div>
         </section>
-      </div>
+      )}
 
-      <div className="work-grid">
+      {activeTab === "products" && (
         <section className="panel">
           <h2>Product moderation</h2>
           <div className="table-wrap">
@@ -208,6 +284,9 @@ export default function AdminPanel() {
             </table>
           </div>
         </section>
+      )}
+
+      {activeTab === "orders" && (
         <section className="panel">
           <h2>Orders overview</h2>
           <div className="table-wrap">
@@ -217,9 +296,9 @@ export default function AdminPanel() {
             </table>
           </div>
         </section>
-      </div>
+      )}
 
-      <div className="work-grid">
+      {activeTab === "portfolio" && (
         <section className="panel">
           <h2>EMI portfolio</h2>
           <div className="table-wrap">
@@ -229,16 +308,20 @@ export default function AdminPanel() {
             </table>
           </div>
         </section>
+      )}
+
+      {activeTab === "disputes" && (
         <section className="panel">
           <h2>Disputes and returns</h2>
           <div className="list-stack">
             {(disputes.data || []).slice(0, 5).map((item) => <div className="list-row" key={item._id}><div><strong>{item.subject}</strong><span>{item.raisedBy?.email}</span></div><StatusBadge status={item.status} /></div>)}
             {(returns.data || []).slice(0, 5).map((item) => <div className="list-row" key={item._id}><div><strong>Return request</strong><span>{item.buyerId?.email} | {item.reason}</span></div><StatusBadge status={item.status} /></div>)}
+            {(disputes.data || []).length === 0 && (returns.data || []).length === 0 && <p className="hint">No disputes or returns require review.</p>}
           </div>
         </section>
-      </div>
+      )}
 
-      {settingsForm && (
+      {activeTab === "settings" && settingsForm && (
         <section className="panel">
           <h2>System settings</h2>
           <div className="form-grid compact">
@@ -269,15 +352,20 @@ export default function AdminPanel() {
           <button className="button" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>Save settings</button>
         </section>
       )}
-      <section className="panel">
-        <h2>Audit trail</h2>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th></tr></thead>
-            <tbody>{(audit.data || []).map((log) => <tr key={log._id}><td>{dayjs(log.createdAt).format("DD MMM HH:mm")}</td><td>{log.actorId?.name || "System"}</td><td>{log.action}</td><td>{log.entityType}</td></tr>)}</tbody>
-          </table>
-        </div>
-      </section>
-    </section>
+
+      {activeTab === "audit" && (
+        <section className="panel">
+          <h2>Audit trail</h2>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th></tr></thead>
+              <tbody>{(audit.data || []).map((log) => <tr key={log._id}><td>{dayjs(log.createdAt).format("DD MMM HH:mm")}</td><td>{log.actorId?.name || "System"}</td><td>{log.action}</td><td>{log.entityType}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "notifications" && <NotificationInbox />}
+    </DashboardShell>
   );
 }

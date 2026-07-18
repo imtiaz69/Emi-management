@@ -13,6 +13,7 @@ const { validateBody, z } = require("../middleware/validate");
 const { uploadFile } = require("../utils/cloudinary");
 const { sendProtectedFile } = require("../utils/fileDelivery");
 const { writeAudit } = require("../services/auditService");
+const { createNotification, notifyRole } = require("../services/notificationService");
 
 const router = express.Router();
 const upload = createUploader("kyc");
@@ -46,6 +47,35 @@ router.post(
       selfie
     });
     await writeAudit(req.user._id, "kyc.uploaded", "KYCDocument", doc._id);
+    const relatedSellerIds = await Loan.distinct("sellerId", {
+      buyerId: req.user._id,
+      status: { $in: ["requested", "approved", "active"] }
+    });
+    await Promise.all([
+      notifyRole("admin", {
+        title: "KYC review required",
+        messageType: "kyc_uploaded",
+        message: `${req.user.name} uploaded a ${String(doc.type).replaceAll("_", " ")} document for verification.`,
+        category: "kyc",
+        severity: "warning",
+        actionUrl: "/admin?tab=kycReview",
+        metadata: { buyerId: req.user._id, kycDocumentId: doc._id, type: doc.type },
+        dedupeKey: `kyc:${doc._id}:uploaded:admin`
+      }),
+      ...relatedSellerIds.map((sellerId) =>
+        createNotification({
+          userId: sellerId,
+          title: "Buyer uploaded KYC",
+          messageType: "buyer_kyc_uploaded",
+          message: `${req.user.name} uploaded a ${String(doc.type).replaceAll("_", " ")} document for review.`,
+          category: "kyc",
+          severity: "warning",
+          actionUrl: "/seller?tab=kycRequests",
+          metadata: { buyerId: req.user._id, kycDocumentId: doc._id, type: doc.type },
+          dedupeKey: `kyc:${doc._id}:uploaded:seller:${sellerId}`
+        })
+      )
+    ]).catch((error) => console.error("Unable to create KYC upload notifications", error));
     res.status(201).json(sanitizeKycDocument(doc));
   })
 );
@@ -146,6 +176,20 @@ router.patch(
       { upsert: true, new: true }
     );
     await writeAudit(req.user._id, `kyc.admin.${doc.status}`, "KYCDocument", doc._id);
+    await createNotification({
+      userId: doc.userId,
+      title: doc.status === "approved" ? "KYC verified" : "KYC verification unsuccessful",
+      messageType: `kyc_admin_${doc.status}`,
+      message:
+        doc.status === "approved"
+          ? "Your identity documents were verified successfully."
+          : `Your identity documents need attention: ${doc.rejectionReason}.`,
+      category: "kyc",
+      severity: doc.status === "approved" ? "success" : "critical",
+      actionUrl: "/buyer?tab=kyc",
+      metadata: { kycDocumentId: doc._id, status: doc.status, reason: doc.rejectionReason },
+      dedupeKey: `kyc:${doc._id}:admin:${doc.status}`
+    }).catch((error) => console.error("Unable to create KYC review notification", error));
     res.json(sanitizeKycDocument(doc));
   })
 );
@@ -180,6 +224,20 @@ router.patch(
       { upsert: true, new: true }
     );
     await writeAudit(req.user._id, `kyc.seller.${review.status}`, "KYCReview", review._id, { kycDocumentId: doc._id });
+    await createNotification({
+      userId: doc.userId,
+      title: review.status === "approved" ? "KYC approved by seller" : "KYC needs attention",
+      messageType: `kyc_seller_${review.status}`,
+      message:
+        review.status === "approved"
+          ? "The seller approved your documents for the EMI request."
+          : `The seller could not approve your documents: ${review.rejectionReason}.`,
+      category: "kyc",
+      severity: review.status === "approved" ? "success" : "critical",
+      actionUrl: "/buyer?tab=kyc",
+      metadata: { kycDocumentId: doc._id, sellerId: req.user._id, status: review.status, reason: review.rejectionReason },
+      dedupeKey: `kyc:${doc._id}:seller:${req.user._id}:${review.status}`
+    }).catch((error) => console.error("Unable to create KYC seller review notification", error));
     res.json({ ...sanitizeKycDocument(doc), sellerReview: review });
   })
 );

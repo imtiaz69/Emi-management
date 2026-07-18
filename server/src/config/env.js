@@ -10,6 +10,16 @@ const envSchema = z.object({
   REFRESH_TOKEN_SECRET: z.string().optional(),
   REFRESH_TOKEN_EXPIRES_IN_DAYS: z.coerce.number().int().positive().default(30),
   CLIENT_URL: z.string().url().optional(),
+  APP_TIMEZONE: z.string().default("Asia/Dhaka"),
+  EMAIL_PROVIDER: z.enum(["mock", "gmail", "resend"]).default("mock"),
+  SMTP_HOST: z.string().default("smtp.gmail.com"),
+  SMTP_PORT: z.coerce.number().int().positive().default(465),
+  SMTP_SECURE: z.string().optional(),
+  SMTP_USER: z.string().email().optional(),
+  SMTP_APP_PASSWORD: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  EXPOSE_EMAIL_OTP: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_CURRENCY: z.string().default("bdt"),
@@ -37,6 +47,11 @@ function validateEnv() {
     if (!env.STRIPE_SECRET_KEY) missing.push("STRIPE_SECRET_KEY");
     if (!env.STRIPE_WEBHOOK_SECRET) missing.push("STRIPE_WEBHOOK_SECRET");
   }
+  if (env.EMAIL_PROVIDER === "gmail") {
+    if (!env.SMTP_USER) missing.push("SMTP_USER");
+    if (!env.SMTP_APP_PASSWORD) missing.push("SMTP_APP_PASSWORD");
+  }
+  if (env.EMAIL_PROVIDER === "resend" && !env.RESEND_API_KEY) missing.push("RESEND_API_KEY");
   if (missing.length) {
     throw new Error(`Missing production environment values: ${missing.join(", ")}`);
   }

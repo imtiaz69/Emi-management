@@ -83,6 +83,11 @@ export default function OrderDetails() {
   if (order.isLoading) return <section className="dashboard"><div className="panel">Loading order...</div></section>;
   if (!data) return <section className="dashboard"><div className="panel">Order not found.</div></section>;
   const canPayWithStripe = user?.role === "buyer" && data.paymentMode === "cash" && data.paymentStatus === "unpaid";
+  const hasApprovedEmi = (data.items || []).some((item) => item.financeMode === "emi" && item.loanId?.status === "approved");
+  const canSellerFulfill = (data.items || []).every((item) => {
+    if (item.financeMode === "emi") return ["active", "closed"].includes(item.loanId?.status);
+    return data.paymentStatus === "paid";
+  });
 
   return (
     <section className="dashboard">
@@ -133,18 +138,20 @@ export default function OrderDetails() {
           <h2>Actions</h2>
           {user?.role === "seller" && (
             <div className="button-row">
-              <button className="button tiny" onClick={() => updateStatus.mutate("processing")}>Processing</button>
-              <button className="button tiny" onClick={() => updateStatus.mutate("shipped")}>Shipped</button>
-              <button className="button tiny" onClick={() => updateStatus.mutate("delivered")}>Delivered</button>
+              <button className="button tiny" disabled={!canSellerFulfill} onClick={() => updateStatus.mutate("processing")}>Processing</button>
+              <button className="button tiny" disabled={!canSellerFulfill} onClick={() => updateStatus.mutate("shipped")}>Shipped</button>
+              <button className="button tiny" disabled={!canSellerFulfill} onClick={() => updateStatus.mutate("delivered")}>Delivered</button>
+              {!canSellerFulfill && <p className="hint">EMI products can be processed after seller approval and confirmed Stripe down payment. Cash products require confirmed payment.</p>}
             </div>
           )}
           {user?.role === "buyer" && (
             <div className="button-row">
               {canPayWithStripe && (
                 <button className="button tiny" disabled={stripePayOrder.isPending} onClick={() => stripePayOrder.mutate()}>
-                  Pay with Stripe
+                  Pay
                 </button>
               )}
+              {hasApprovedEmi && <Link className="button tiny" to="/buyer?tab=loans">Pay EMI down payment</Link>}
               {[...new Set((data.items || []).map((item) => item.sellerId))].map((sellerId) => (
                 <button className="button tiny secondary" key={sellerId} onClick={() => createReturn.mutate(sellerId)}>Request return</button>
               ))}

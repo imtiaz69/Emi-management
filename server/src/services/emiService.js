@@ -1,4 +1,11 @@
 const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Dhaka";
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -92,7 +99,10 @@ function calculateSchedule({ principal, downPayment = 0, interestRate = 0, inter
 
 function calculateLateFee(schedule, policy, asOf = new Date()) {
   if (!policy || policy.type === "none" || schedule.status === "paid") return 0;
-  const daysLate = Math.max(0, dayjs(asOf).diff(dayjs(schedule.dueDate), "day"));
+  const daysLate = Math.max(
+    0,
+    dayjs(asOf).tz(APP_TIMEZONE).startOf("day").diff(dayjs(schedule.dueDate).tz(APP_TIMEZONE).startOf("day"), "day")
+  );
   if (daysLate <= 0) return 0;
   if (policy.type === "fixed") return roundMoney(policy.value);
   if (policy.type === "daily") return roundMoney(policy.value * daysLate);

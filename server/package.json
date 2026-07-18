@@ -8,6 +8,8 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed": "node src/seed.js",
+    "reconcile:accounting": "node src/scripts/reconcileAccountingHistory.js",
+    "reconcile:emi-orders": "node src/scripts/reconcileLegacyEmiOrders.js",
     "test": "vitest run"
   },
   "keywords": [],
@@ -29,8 +31,10 @@
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
     "node-cron": "^3.0.3",
+    "nodemailer": "^9.0.3",
     "pdfkit": "^0.17.2",
     "resend": "^6.17.2",
+    "socket.io": "^4.8.3",
     "stripe": "^22.2.3",
     "zod": "^4.2.1"
   },

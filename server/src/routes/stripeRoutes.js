@@ -7,7 +7,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { requireVerified } = require("../middleware/security");
 const { objectId, validateBody, z } = require("../middleware/validate");
-const { getPaymentAllocationPreview, recordPayment } = require("../services/loanService");
+const { activateApprovedLoanAfterDownPayment, getPaymentAllocationPreview, recordPayment } = require("../services/loanService");
 const { markOrderPaidWithOptions } = require("../services/orderService");
 const { getStripeClient, getStripeCurrency, toStripeAmount } = require("../services/stripeService");
 
@@ -51,6 +51,29 @@ async function recordStripeLoanPayment(session) {
   return transaction;
 }
 
+async function recordStripeDownPayment(session) {
+  const gatewayRef = session.payment_intent || session.id;
+  const existingTransaction = await Transaction.findOne({ gatewayRef });
+  if (existingTransaction) {
+    await updatePaymentLog(session, "confirmed", "checkout.session.completed", existingTransaction);
+    return existingTransaction;
+  }
+
+  const transaction = await activateApprovedLoanAfterDownPayment(
+    {
+      loanId: session.metadata.loanId,
+      buyerId: session.metadata.buyerId,
+      amount: Number(session.metadata.amountBdt),
+      method: "stripe",
+      gatewayRef,
+      notes: "Stripe Checkout EMI down payment"
+    },
+    session.metadata.buyerId
+  );
+  await updatePaymentLog(session, "confirmed", "checkout.session.completed", transaction);
+  return transaction;
+}
+
 async function recordStripeOrderPayment(session) {
   const gatewayRef = session.payment_intent || session.id;
   const orderId = session.metadata?.orderId;
@@ -84,6 +107,9 @@ async function recordStripeOrderPayment(session) {
 async function recordStripeCheckoutPayment(session) {
   if (session.metadata?.paymentFor === "order") {
     return recordStripeOrderPayment(session);
+  }
+  if (session.metadata?.paymentFor === "loan_down_payment") {
+    return recordStripeDownPayment(session);
   }
   return recordStripeLoanPayment(session);
 }
@@ -128,23 +154,38 @@ router.post(
       throw error;
     }
 
-    const loan = await Loan.findOne({ _id: loanId, buyerId: req.user._id, status: "active" }).populate("productId", "name");
+    const loan = await Loan.findOne({ _id: loanId, buyerId: req.user._id, status: { $in: ["approved", "active"] } }).populate("productId", "name");
     if (!loan) {
-      const error = new Error("Active loan not found for this buyer");
+      const error = new Error("Payable EMI loan not found for this buyer");
       error.status = 404;
       throw error;
     }
 
-    const allocationPreview = await getPaymentAllocationPreview({ loanId: loan._id, allocationMode, installmentCount });
-    if (allocationPreview.outstanding < 1) {
-      const error = new Error("This loan has no payable installments");
-      error.status = 400;
-      throw error;
-    }
-    if (amount > allocationPreview.outstanding) {
-      const error = new Error(`Payment cannot exceed selected EMI amount BDT ${Math.round(allocationPreview.outstanding)}`);
-      error.status = 400;
-      throw error;
+    const isDownPayment = loan.status === "approved";
+    if (isDownPayment) {
+      const requiredDownPayment = Number(loan.downPayment || 0);
+      if (requiredDownPayment < 1) {
+        const error = new Error("This approved loan does not require an online down payment");
+        error.status = 400;
+        throw error;
+      }
+      if (Math.round(amount) !== Math.round(requiredDownPayment)) {
+        const error = new Error(`The required down payment is BDT ${Math.round(requiredDownPayment)}`);
+        error.status = 400;
+        throw error;
+      }
+    } else {
+      const allocationPreview = await getPaymentAllocationPreview({ loanId: loan._id, allocationMode, installmentCount });
+      if (allocationPreview.outstanding < 1) {
+        const error = new Error("This loan has no payable installments");
+        error.status = 400;
+        throw error;
+      }
+      if (amount > allocationPreview.outstanding) {
+        const error = new Error(`Payment cannot exceed selected EMI amount BDT ${Math.round(allocationPreview.outstanding)}`);
+        error.status = 400;
+        throw error;
+      }
     }
 
     const stripe = getStripeClient();
@@ -160,7 +201,11 @@ router.post(
           price_data: {
             currency,
             product_data: {
-              name: loan.productId?.name ? `EMI payment - ${loan.productId.name}` : "EMI installment payment"
+              name: isDownPayment
+                ? `EMI down payment - ${loan.productId?.name || "approved product"}`
+                : loan.productId?.name
+                  ? `EMI payment - ${loan.productId.name}`
+                  : "EMI installment payment"
             },
             unit_amount: toStripeAmount(amount)
           },
@@ -170,12 +215,16 @@ router.post(
       success_url: `${clientUrl}/buyer?stripe=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${clientUrl}/buyer?stripe=cancel&session_id={CHECKOUT_SESSION_ID}`,
       metadata: {
-        paymentFor: "loan",
+        paymentFor: isDownPayment ? "loan_down_payment" : "loan",
         loanId: loan._id.toString(),
         buyerId: req.user._id.toString(),
         amountBdt: String(Math.round(amount)),
-        allocationMode,
-        ...(allocationMode === "next_n" && installmentCount ? { installmentCount: String(installmentCount) } : {})
+        ...(isDownPayment
+          ? {}
+          : {
+              allocationMode,
+              ...(allocationMode === "next_n" && installmentCount ? { installmentCount: String(installmentCount) } : {})
+            })
       }
     });
     await updatePaymentLog(session, "pending", "checkout.session.created");
