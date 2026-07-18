@@ -31,9 +31,79 @@ function getGmailTransporter() {
   return gmailTransporter;
 }
 
+async function getGmailApiAccessToken() {
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GMAIL_CLIENT_ID || "",
+      client_secret: process.env.GMAIL_CLIENT_SECRET || "",
+      refresh_token: process.env.GMAIL_REFRESH_TOKEN || "",
+      grant_type: "refresh_token"
+    })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.access_token) {
+    throw new Error(data.error_description || data.error || "Gmail API token exchange failed");
+  }
+  return data.access_token;
+}
+
+function gmailApiMessage({ to, otp, name }) {
+  const from = process.env.EMAIL_FROM || `FinanceLend <${process.env.SMTP_USER}>`;
+  const html = buildVerificationHtml({ otp, name });
+  const boundary = `financelend-${Date.now()}`;
+  const message = [
+    `From: ${from}`,
+    `To: ${to}`,
+    "Subject: Verify your FinanceLend account",
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    `Your FinanceLend verification code is ${otp}. This code will expire in 10 minutes.`,
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    html,
+    `--${boundary}--`
+  ].join("\r\n");
+  return Buffer.from(message).toString("base64url");
+}
+
+async function sendWithGmailApi({ to, otp, name }) {
+  try {
+    const accessToken = await getGmailApiAccessToken();
+    const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ raw: gmailApiMessage({ to, otp, name }) })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.id) {
+      throw new Error(data.error?.message || "Gmail API refused the email");
+    }
+    return { mocked: false, id: data.id, provider: "gmail_api" };
+  } catch (error) {
+    console.error(`Gmail API verification email failed for ${to}: ${error.message}`);
+    const deliveryError = new Error("We could not send the verification email through the Gmail API. Please check the Google OAuth configuration and try again.");
+    deliveryError.status = 502;
+    deliveryError.cause = error;
+    throw deliveryError;
+  }
+}
+
 async function sendVerificationEmail({ to, otp, name }) {
   const provider = String(process.env.EMAIL_PROVIDER || "mock").toLowerCase();
   if (provider === "gmail") return sendWithGmail({ to, otp, name });
+  if (provider === "gmail_api") return sendWithGmailApi({ to, otp, name });
 
   const shouldUseResend = provider === "resend";
   const resend = getResendClient();
@@ -94,6 +164,10 @@ async function verifyEmailTransport() {
   const provider = String(process.env.EMAIL_PROVIDER || "mock").toLowerCase();
   if (provider === "gmail") {
     await getGmailTransporter().verify();
+    return { provider, ready: true };
+  }
+  if (provider === "gmail_api") {
+    await getGmailApiAccessToken();
     return { provider, ready: true };
   }
   if (provider === "resend") {
