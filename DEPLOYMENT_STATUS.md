@@ -18,7 +18,7 @@ Deployment completed on 19 July 2026.
 | Database | MongoDB Atlas | Existing cloud cluster |
 | Product and KYC media | Cloudinary | Existing cloud account |
 | Test payments | Stripe | Test mode |
-| Verification email | Resend | Sandbox sender |
+| Account email | Gmail SMTP through a protected Vercel Function | Personal Gmail App Password |
 
 No custom domain or payment card was added during deployment.
 
@@ -29,16 +29,16 @@ No custom domain or payment card was added during deployment.
 - Vercel project: `financelend-emi-management`
 - Vercel project ID: `prj_2QWGJk7YOIsfvRVvHYXr6CGQnk6Z`
 - Git branch: `main`
-- Deployed source commit: `59af3e7ae23a6d847530fde3d4e0e2e80169461a`
+- Deployed application commit: `6fc24df`
 - Backend region: Singapore
 - Application timezone: `Asia/Dhaka`
 - Render deployment method: authenticated CLI
 - Automatic database seeding: disabled
 - Production OTP exposure: disabled
 
-All backend secrets are stored in Render environment variables. No
-MongoDB, Stripe, Cloudinary, email, or JWT secret is stored in Vercel or
-committed to GitHub.
+Backend secrets are stored in Render environment variables. The Gmail
+credentials and a private relay secret are stored in Vercel production
+environment variables. Secrets are not committed to GitHub.
 
 ## Verified Checks
 
@@ -51,9 +51,15 @@ committed to GitHub.
 - Authenticated Socket.IO connects to the buyer's private room.
 - Stripe creates an exact-value BDT Checkout session.
 - The Stripe test webhook is enabled with a Render-only signing secret.
-- Resend accepted a deployment verification email.
+- The protected Vercel email relay delivered a Gmail message to the demo
+  recovery inbox and rejected an unauthenticated request.
+- Password recovery sends a random, hashed, ten-minute OTP and never
+  returns it from the production API.
+- Unverified accounts are blocked from cart and checkout actions.
+- Buyers with incomplete profiles or missing KYC are blocked before an
+  EMI product can be prepared for checkout.
 - Desktop home and mobile marketplace screenshots rendered correctly.
-- Backend test suite passed 25 of 25 tests.
+- Backend test suite passed 26 of 26 tests.
 - Vite production build completed successfully.
 
 ## Important Free-Tier Behavior
@@ -64,9 +70,10 @@ committed to GitHub.
 - Cloudinary must remain enabled because Render's local filesystem is
   temporary.
 - Stripe is intentionally in test mode.
-- Resend's `onboarding@resend.dev` sandbox sender can send only to the
-  Resend account owner's email. Sending verification email to every user
-  requires a verified sending domain or another HTTPS email provider.
+- Registration and password-reset email is relayed over HTTPS from
+  Render to a protected Vercel Function, which sends through Gmail SMTP.
+- Password-reset messages for the `.local` demo accounts are delivered
+  to `imtiazahmed4407@gmail.com`.
 
 ## Redeployment
 
