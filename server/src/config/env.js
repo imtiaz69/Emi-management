@@ -11,7 +11,7 @@ const envSchema = z.object({
   REFRESH_TOKEN_EXPIRES_IN_DAYS: z.coerce.number().int().positive().default(30),
   CLIENT_URL: z.string().url().optional(),
   APP_TIMEZONE: z.string().default("Asia/Dhaka"),
-  EMAIL_PROVIDER: z.enum(["mock", "gmail", "gmail_api", "resend"]).default("mock"),
+  EMAIL_PROVIDER: z.enum(["mock", "gmail", "gmail_api", "resend", "relay"]).default("mock"),
   SMTP_HOST: z.string().default("smtp.gmail.com"),
   SMTP_PORT: z.coerce.number().int().positive().default(465),
   SMTP_SECURE: z.string().optional(),
@@ -22,6 +22,9 @@ const envSchema = z.object({
   GMAIL_REFRESH_TOKEN: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  DEMO_EMAIL_RECIPIENT: z.string().email().optional(),
+  EMAIL_RELAY_URL: z.string().url().optional(),
+  EMAIL_RELAY_SECRET: z.string().min(32).optional(),
   EXPOSE_EMAIL_OTP: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -61,6 +64,10 @@ function validateEnv() {
     if (!env.GMAIL_REFRESH_TOKEN) missing.push("GMAIL_REFRESH_TOKEN");
   }
   if (env.EMAIL_PROVIDER === "resend" && !env.RESEND_API_KEY) missing.push("RESEND_API_KEY");
+  if (env.EMAIL_PROVIDER === "relay") {
+    if (!env.EMAIL_RELAY_URL) missing.push("EMAIL_RELAY_URL");
+    if (!env.EMAIL_RELAY_SECRET) missing.push("EMAIL_RELAY_SECRET with at least 32 characters");
+  }
   if (missing.length) {
     throw new Error(`Missing production environment values: ${missing.join(", ")}`);
   }

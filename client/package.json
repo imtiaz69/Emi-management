@@ -14,6 +14,7 @@
     "axios": "^1.13.2",
     "dayjs": "^1.11.19",
     "lucide-react": "^0.562.0",
+    "nodemailer": "^7.0.13",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router-dom": "^6.30.2",

@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema(
     isVerified: { type: Boolean, default: false },
     otpCode: String,
     otpExpiresAt: Date,
+    passwordResetOtpHash: String,
+    passwordResetOtpExpiresAt: Date,
+    passwordResetAttempts: { type: Number, default: 0 },
+    passwordResetLastSentAt: Date,
     failedLoginAttempts: { type: Number, default: 0 },
     lockUntil: Date,
     lastLoginAt: Date

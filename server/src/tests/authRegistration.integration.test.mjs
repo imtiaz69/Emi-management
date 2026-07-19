@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import bcrypt from "bcryptjs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -128,5 +129,46 @@ describe("email-gated registration", () => {
     const profile = await BuyerProfile.findOne({ userId: buyer._id });
     expect(buyer).toMatchObject({ role: "buyer", status: "active", isVerified: true });
     expect(profile).toMatchObject({ address: "Dhaka", nidNumber: "NID-102" });
+  });
+
+  it("emails a random password-reset OTP and accepts it only through the reset flow", async () => {
+    const user = await User.create({
+      name: "Reset Buyer",
+      email: "reset-buyer@example.com",
+      phone: "+8801700000199",
+      passwordHash: await bcrypt.hash("Buyer@123", 10),
+      role: "buyer",
+      status: "active",
+      isVerified: true
+    });
+
+    const resetRequest = await request(app).post("/api/auth/forgot-password").send({
+      email: user.email
+    });
+    expect(resetRequest.status).toBe(200);
+    expect(resetRequest.body.mockOtp).toMatch(/^\d{6}$/);
+    expect(resetRequest.body.mockOtp).not.toBe("123456");
+
+    const stored = await User.findById(user._id);
+    expect(stored.passwordResetOtpHash).not.toBe(resetRequest.body.mockOtp);
+    expect(await bcrypt.compare(resetRequest.body.mockOtp, stored.passwordResetOtpHash)).toBe(true);
+
+    const wrongReset = await request(app).post("/api/auth/reset-password").send({
+      email: user.email,
+      otp: "000000",
+      password: "Changed@123"
+    });
+    expect(wrongReset.status).toBe(400);
+
+    const reset = await request(app).post("/api/auth/reset-password").send({
+      email: user.email,
+      otp: resetRequest.body.mockOtp,
+      password: "Changed@123"
+    });
+    expect(reset.status).toBe(200);
+
+    const updated = await User.findById(user._id);
+    expect(await bcrypt.compare("Changed@123", updated.passwordHash)).toBe(true);
+    expect(updated.passwordResetOtpHash).toBeUndefined();
   });
 });

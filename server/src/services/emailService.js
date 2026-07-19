@@ -49,14 +49,13 @@ async function getGmailApiAccessToken() {
   return data.access_token;
 }
 
-function gmailApiMessage({ to, otp, name }) {
+function gmailApiMessage({ to, subject, html, text }) {
   const from = process.env.EMAIL_FROM || `FinanceLend <${process.env.SMTP_USER}>`;
-  const html = buildVerificationHtml({ otp, name });
   const boundary = `financelend-${Date.now()}`;
   const message = [
     `From: ${from}`,
     `To: ${to}`,
-    "Subject: Verify your FinanceLend account",
+    `Subject: ${subject}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "",
@@ -64,7 +63,7 @@ function gmailApiMessage({ to, otp, name }) {
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
     "",
-    `Your FinanceLend verification code is ${otp}. This code will expire in 10 minutes.`,
+    text,
     `--${boundary}`,
     'Content-Type: text/html; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
@@ -75,7 +74,7 @@ function gmailApiMessage({ to, otp, name }) {
   return Buffer.from(message).toString("base64url");
 }
 
-async function sendWithGmailApi({ to, otp, name }) {
+async function sendWithGmailApi({ to, subject, html, text }) {
   try {
     const accessToken = await getGmailApiAccessToken();
     const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
@@ -84,7 +83,7 @@ async function sendWithGmailApi({ to, otp, name }) {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ raw: gmailApiMessage({ to, otp, name }) })
+      body: JSON.stringify({ raw: gmailApiMessage({ to, subject, html, text }) })
     });
     const data = await response.json();
     if (!response.ok || !data.id) {
@@ -101,9 +100,32 @@ async function sendWithGmailApi({ to, otp, name }) {
 }
 
 async function sendVerificationEmail({ to, otp, name }) {
+  return sendOtpEmail({
+    to,
+    otp,
+    name,
+    subject: "Verify your FinanceLend account",
+    html: buildVerificationHtml({ otp, name }),
+    text: `Your FinanceLend verification code is ${otp}. This code will expire in 10 minutes.`
+  });
+}
+
+async function sendPasswordResetEmail({ to, otp, name }) {
+  return sendOtpEmail({
+    to,
+    otp,
+    name,
+    subject: "Reset your FinanceLend password",
+    html: buildPasswordResetHtml({ otp, name }),
+    text: `Your FinanceLend password reset code is ${otp}. This code will expire in 10 minutes.`
+  });
+}
+
+async function sendOtpEmail({ to, otp, name, subject, html, text }) {
   const provider = String(process.env.EMAIL_PROVIDER || "mock").toLowerCase();
-  if (provider === "gmail") return sendWithGmail({ to, otp, name });
-  if (provider === "gmail_api") return sendWithGmailApi({ to, otp, name });
+  if (provider === "gmail") return sendWithGmail({ to, subject, html, text });
+  if (provider === "gmail_api") return sendWithGmailApi({ to, subject, html, text });
+  if (provider === "relay") return sendWithEmailRelay({ to, subject: `FinanceLend: ${subject}`, html, text });
 
   const shouldUseResend = provider === "resend";
   const resend = getResendClient();
@@ -117,9 +139,9 @@ async function sendVerificationEmail({ to, otp, name }) {
     const { data, error } = await resend.emails.send({
       from: process.env.EMAIL_FROM || "FinanceLend <onboarding@resend.dev>",
       to,
-      subject: "Verify your FinanceLend account",
-      html: buildVerificationHtml({ otp, name }),
-      text: `Your FinanceLend verification code is ${otp}. This code will expire in 10 minutes.`
+      subject,
+      html,
+      text
     });
     if (error) {
       const message = error.message || "Resend refused the email request";
@@ -141,14 +163,45 @@ async function sendVerificationEmail({ to, otp, name }) {
   }
 }
 
-async function sendWithGmail({ to, otp, name }) {
+async function sendWithEmailRelay({ to, subject, html, text }) {
+  const relayUrl = process.env.EMAIL_RELAY_URL;
+  const relaySecret = process.env.EMAIL_RELAY_SECRET;
+  if (!relayUrl || !relaySecret) {
+    const error = new Error("Email relay is enabled, but its URL or secret is missing");
+    error.status = 500;
+    throw error;
+  }
+
+  try {
+    const response = await fetch(relayUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${relaySecret}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ to, subject, html, text }),
+      signal: AbortSignal.timeout(15000)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.accepted) throw new Error(data.message || `Email relay returned HTTP ${response.status}`);
+    return { mocked: false, id: data.id, provider: "relay" };
+  } catch (error) {
+    console.error(`Email relay delivery failed for ${to}: ${error.message}`);
+    const deliveryError = new Error("We could not send the email. Please try again shortly.");
+    deliveryError.status = 502;
+    deliveryError.cause = error;
+    throw deliveryError;
+  }
+}
+
+async function sendWithGmail({ to, subject, html, text }) {
   try {
     const info = await getGmailTransporter().sendMail({
       from: process.env.EMAIL_FROM || `FinanceLend <${process.env.SMTP_USER}>`,
       to,
-      subject: "Verify your FinanceLend account",
-      html: buildVerificationHtml({ otp, name }),
-      text: `Your FinanceLend verification code is ${otp}. This code will expire in 10 minutes.`
+      subject,
+      html,
+      text
     });
     return { mocked: false, id: info.messageId, provider: "gmail" };
   } catch (error) {
@@ -174,6 +227,10 @@ async function verifyEmailTransport() {
     if (!getResendClient()) throw new Error("RESEND_API_KEY is missing");
     return { provider, ready: true };
   }
+  if (provider === "relay") {
+    if (!process.env.EMAIL_RELAY_URL || !process.env.EMAIL_RELAY_SECRET) throw new Error("Email relay configuration is missing");
+    return { provider, ready: true };
+  }
   return { provider: "mock", ready: true };
 }
 
@@ -197,6 +254,26 @@ function buildVerificationHtml({ otp, name }) {
   `;
 }
 
+function buildPasswordResetHtml({ otp, name }) {
+  return `
+    <div style="margin:0;padding:32px 16px;background:#f3f6f5;font-family:Arial,sans-serif;color:#17342f">
+      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #dbe5e2;border-radius:8px;overflow:hidden">
+        <div style="padding:22px 28px;background:#0f5f55;color:#ffffff">
+          <div style="font-size:22px;font-weight:700">FinanceLend</div>
+          <div style="margin-top:4px;font-size:13px;color:#d4ebe7">Secure password recovery</div>
+        </div>
+        <div style="padding:28px">
+          <h1 style="margin:0 0 16px;font-size:22px;color:#17342f">Reset your password</h1>
+          <p style="margin:0 0 18px;line-height:1.6">Hello ${escapeHtml(name || "there")}, use this code to reset your FinanceLend password.</p>
+          <div style="padding:18px;text-align:center;background:#eef7f5;border:1px solid #c9e3de;border-radius:6px;font-size:32px;font-weight:700;letter-spacing:6px;color:#0f5f55">${otp}</div>
+          <p style="margin:18px 0 0;line-height:1.6">This code expires in 10 minutes and can only be used for this password reset.</p>
+          <p style="margin:18px 0 0;font-size:13px;line-height:1.5;color:#657773">If you did not request a password reset, ignore this email and keep your current password.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -206,4 +283,4 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-module.exports = { sendVerificationEmail, verifyEmailTransport };
+module.exports = { sendPasswordResetEmail, sendVerificationEmail, verifyEmailTransport };

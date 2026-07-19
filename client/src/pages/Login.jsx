@@ -37,9 +37,9 @@ export default function Login() {
     setError("");
     try {
       const { data } = await api.post("/auth/forgot-password", { email: resetForm.email || form.email });
-      setResetForm({ ...resetForm, email: resetForm.email || form.email, otp: data.mockOtp || "" });
-      setMessage(`${data.message} Demo OTP: ${data.mockOtp}`);
-      notifyInfo("Password reset OTP generated.");
+      setResetForm({ ...resetForm, email: resetForm.email || form.email, otp: "" });
+      setMessage(data.message);
+      notifyInfo("Check your email for the password reset code.");
     } catch (err) {
       setError(err.response?.data?.message || "Unable to request OTP");
       notifyError(err, "Unable to request OTP");
@@ -76,7 +76,7 @@ export default function Login() {
           <div className="panel">
             <h2>Reset password</h2>
             <label>Email<input value={resetForm.email} onChange={(e) => setResetForm({ ...resetForm, email: e.target.value })} /></label>
-            <button type="button" className="button tiny" onClick={requestReset}>Get mock OTP</button>
+            <button type="button" className="button tiny" onClick={requestReset}>Send reset code</button>
             <div>
               <label>OTP<input value={resetForm.otp} onChange={(e) => setResetForm({ ...resetForm, otp: e.target.value })} /></label>
               <label>New password<input type="password" value={resetForm.password} onChange={(e) => setResetForm({ ...resetForm, password: e.target.value })} /></label>

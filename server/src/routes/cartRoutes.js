@@ -4,9 +4,11 @@ const Product = require("../models/Product");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { objectId, validateBody, z } = require("../middleware/validate");
+const { requireVerified } = require("../middleware/security");
+const { assertBuyerReadyForEmi } = require("../services/buyerReadinessService");
 
 const router = express.Router();
-router.use(authenticate, authorize("buyer"));
+router.use(authenticate, authorize("buyer"), requireVerified);
 
 const cartItemSchema = z.object({
   productId: objectId,
@@ -37,6 +39,9 @@ router.post(
     if (!product) return res.status(404).json({ message: "Product not found" });
     if (product.stock < req.body.quantity) return res.status(400).json({ message: "Not enough stock available" });
     if (req.body.selectedFinanceMode === "emi" && !product.emiAvailable) return res.status(400).json({ message: "This product is not EMI available" });
+    if (req.body.selectedFinanceMode === "emi") {
+      await assertBuyerReadyForEmi(req.user._id);
+    }
     const selectedColor = resolveSelectedColor(product, req.body.selectedColorName);
 
     const cart = await getOrCreateCart(req.user._id);
@@ -78,6 +83,9 @@ router.patch(
     }
     if (req.body.selectedFinanceMode) {
       if (req.body.selectedFinanceMode === "emi" && !product.emiAvailable) return res.status(400).json({ message: "This product is not EMI available" });
+      if (req.body.selectedFinanceMode === "emi") {
+        await assertBuyerReadyForEmi(req.user._id);
+      }
       item.selectedFinanceMode = req.body.selectedFinanceMode;
     }
     if (req.body.selectedColorName) {

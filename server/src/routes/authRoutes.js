@@ -11,7 +11,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { isStrongPassword } = require("../utils/password");
 const { createRefreshTokenValue, getRefreshExpiry, hashToken, signToken } = require("../utils/tokens");
 const { writeAudit } = require("../services/auditService");
-const { sendVerificationEmail } = require("../services/emailService");
+const { sendPasswordResetEmail, sendVerificationEmail } = require("../services/emailService");
 const { createNotification, notifyRole } = require("../services/notificationService");
 const { validateBody, z } = require("../middleware/validate");
 const { authenticate } = require("../middleware/auth");
@@ -275,14 +275,44 @@ router.post(
   "/forgot-password",
   validateBody(forgotPasswordSchema),
   asyncHandler(async (req, res) => {
-    const user = await User.findOne({ email: req.body.email.toLowerCase() });
+    const normalizedEmail = req.body.email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (user) {
-      user.otpCode = "123456";
-      user.otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+      const elapsed = user.passwordResetLastSentAt ? Date.now() - user.passwordResetLastSentAt.getTime() : RESEND_COOLDOWN_MS;
+      if (elapsed < RESEND_COOLDOWN_MS) {
+        const retryAfter = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
+        return res.status(429).json({
+          message: `Please wait ${retryAfter} seconds before requesting another reset code.`,
+          retryAfter
+        });
+      }
+
+      const otp = generateOtp();
+      user.passwordResetOtpHash = await bcrypt.hash(otp, 10);
+      user.passwordResetOtpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+      user.passwordResetAttempts = 0;
+      user.passwordResetLastSentAt = new Date();
       await user.save();
+      const recipient = getPasswordResetRecipient(user.email);
+      let emailResult;
+      try {
+        emailResult = await sendPasswordResetEmail({ to: recipient, otp, name: user.name });
+      } catch (error) {
+        user.passwordResetOtpHash = undefined;
+        user.passwordResetOtpExpiresAt = undefined;
+        user.passwordResetAttempts = 0;
+        user.passwordResetLastSentAt = undefined;
+        await user.save();
+        throw error;
+      }
       await writeAudit(user._id, "auth.password_reset_requested", "User", user._id);
+      return res.json({
+        message: "A password reset code was sent to your email.",
+        expiresInSeconds: OTP_TTL_MS / 1000,
+        ...getDevelopmentOtpPayload(emailResult, otp)
+      });
     }
-    res.json({ message: "If the email exists, a reset OTP has been generated.", mockOtp: "123456" });
+    res.json({ message: "If an account exists for that email, a password reset code has been sent." });
   })
 );
 
@@ -292,10 +322,26 @@ router.post(
   asyncHandler(async (req, res) => {
     if (!isStrongPassword(req.body.password)) return res.status(400).json({ message: "Password must be 8+ chars with uppercase, number, and special character" });
     const user = await User.findOne({ email: req.body.email.toLowerCase() });
-    if (!user || user.otpCode !== req.body.otp || user.otpExpiresAt < new Date()) return res.status(400).json({ message: "Invalid or expired OTP" });
+    if (
+      !user ||
+      !user.passwordResetOtpHash ||
+      !user.passwordResetOtpExpiresAt ||
+      user.passwordResetOtpExpiresAt < new Date() ||
+      user.passwordResetAttempts >= MAX_OTP_ATTEMPTS
+    ) {
+      return res.status(400).json({ message: "Invalid or expired password reset code" });
+    }
+    const validOtp = await bcrypt.compare(req.body.otp, user.passwordResetOtpHash);
+    if (!validOtp) {
+      user.passwordResetAttempts += 1;
+      await user.save();
+      return res.status(400).json({ message: "Invalid or expired password reset code" });
+    }
     user.passwordHash = await bcrypt.hash(req.body.password, 10);
-    user.otpCode = undefined;
-    user.otpExpiresAt = undefined;
+    user.passwordResetOtpHash = undefined;
+    user.passwordResetOtpExpiresAt = undefined;
+    user.passwordResetAttempts = 0;
+    user.passwordResetLastSentAt = undefined;
     user.failedLoginAttempts = 0;
     user.lockUntil = undefined;
     await user.save();
@@ -498,6 +544,13 @@ function getDevelopmentOtpPayload(emailResult, otp) {
     ...(emailResult?.mocked && shouldExposeOtp ? { mockOtp: otp } : {}),
     ...(emailResult?.error ? { emailWarning: emailResult.error } : {})
   };
+}
+
+function getPasswordResetRecipient(accountEmail) {
+  const isDemoAccount = /@emi\.local$/i.test(accountEmail);
+  return isDemoAccount && process.env.DEMO_EMAIL_RECIPIENT
+    ? process.env.DEMO_EMAIL_RECIPIENT.trim().toLowerCase()
+    : accountEmail;
 }
 
 function sanitizeUser(user) {

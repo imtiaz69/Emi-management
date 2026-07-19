@@ -9,6 +9,7 @@ const {
   updateOrderFulfillment
 } = require("../services/orderService");
 const { checkoutFromCart } = require("../services/checkoutService");
+const { requireVerified } = require("../middleware/security");
 
 const router = express.Router();
 router.use(authenticate);
@@ -61,6 +62,7 @@ const fulfillmentSchema = z.object({
 router.post(
   "/from-cart",
   authorize("buyer"),
+  requireVerified,
   validateBody(fromCartSchema),
   asyncHandler(async (req, res) => {
     const order = await checkoutFromCart({ ...req.body, buyerId: req.user._id });
