@@ -32,7 +32,7 @@ No custom domain or payment card was added during deployment.
 - Deployed source commit: `59af3e7ae23a6d847530fde3d4e0e2e80169461a`
 - Backend region: Singapore
 - Application timezone: `Asia/Dhaka`
-- Automatic Render deployment: enabled
+- Render deployment method: authenticated CLI
 - Automatic database seeding: disabled
 - Production OTP exposure: disabled
 
@@ -70,7 +70,15 @@ committed to GitHub.
 
 ## Redeployment
 
-Render automatically deploys new commits from `main`.
+Deploy backend changes from the project root:
+
+```bash
+render deploys create srv-d9e1emv41pts73e2u3ug --commit COMMIT_SHA --wait
+```
+
+Automatic Render deploys require connecting the repository through the
+Render GitHub App. The current service securely clones the public
+repository and is deployed through the authenticated Render CLI.
 
 The current Vercel account is not connected to the repository through
 the Vercel GitHub App, so deploy frontend changes from the project root:
