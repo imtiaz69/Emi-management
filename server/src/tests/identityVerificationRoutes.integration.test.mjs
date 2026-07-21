@@ -103,6 +103,26 @@ describe("identity verification session routes", () => {
     expect(otherView.status).toBe(404);
   });
 
+  it("creates a one-time phone capture link for a buyer NID session", async () => {
+    const created = await request(app)
+      .post("/api/identity-verifications/buyer/start")
+      .set("Authorization", auth(buyer))
+      .send({ mode: "mobile" });
+    expect(created.status).toBe(201);
+    expect(created.body.uploadToken).toBeUndefined();
+    expect(created.body.session.status).toBe("CREATED");
+    expect(created.body.session.captureMode).toBe("document_only");
+    expect(created.body.mobileUrl).toMatch(/^https:\/\/client\.test\/verify\/mobile#/);
+
+    const linkToken = created.body.mobileUrl.split("#")[1];
+    const firstExchange = await request(app).post("/api/identity-verifications/mobile/exchange").send({ token: linkToken });
+    const replayExchange = await request(app).post("/api/identity-verifications/mobile/exchange").send({ token: linkToken });
+    expect(firstExchange.status).toBe(200);
+    expect(firstExchange.body.uploadToken).toHaveLength(43);
+    expect(firstExchange.body.session.status).toBe("CAPTURING");
+    expect(replayExchange.status).toBe(410);
+  });
+
   it("blocks NID upload sessions until the buyer profile is complete", async () => {
     await BuyerProfile.updateOne({ userId: buyer._id }, { $set: { dateOfBirth: "" } });
     const response = await request(app)

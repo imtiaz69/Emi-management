@@ -138,7 +138,10 @@ export default function MobileIdentityVerification() {
     }
   }
 
-  const completeCapture = session?.captures?.front && session?.captures?.back && session?.captures?.liveness;
+  const documentOnly = session?.verificationType === "nid_cross_check" || session?.captureMode === "document_only";
+  const completeCapture = documentOnly
+    ? session?.captures?.front
+    : session?.captures?.front && session?.captures?.back && session?.captures?.liveness;
   const submitted = ["QUEUED", "WAKING_AI", "PROCESSING", "COMPLETED"].includes(session?.status);
 
   return (
@@ -154,7 +157,7 @@ export default function MobileIdentityVerification() {
 
         {session && !submitted && (
           <>
-            <div className="mobile-identity-title"><span>Private session</span><h1>Capture your identity evidence</h1><p>Your raw captures are removed automatically after the review period.</p></div>
+            <div className="mobile-identity-title"><span>Private session</span><h1>{documentOnly ? "Capture the front of your NID" : "Capture your identity evidence"}</h1><p>{documentOnly ? "Use the rear camera and keep the full card clear, flat, and readable." : "Your raw captures are removed automatically after the review period."}</p></div>
             <div className="mobile-capture-steps">
               <label className={`mobile-capture-card ${session.captures?.front ? "complete" : ""}`}>
                 <span className="mobile-step-number">1</span><CreditCard size={25} />
@@ -162,20 +165,20 @@ export default function MobileIdentityVerification() {
                 {session.captures?.front ? <CheckCircle2 className="capture-check" /> : <Camera className="capture-action" />}
                 <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("front", event.target.files[0])} />
               </label>
-              <label className={`mobile-capture-card ${session.captures?.back ? "complete" : ""}`}>
+              {!documentOnly && <label className={`mobile-capture-card ${session.captures?.back ? "complete" : ""}`}>
                 <span className="mobile-step-number">2</span><CreditCard size={25} />
                 <span><strong>Back of NID</strong><small>Keep the complete QR code sharp and inside the frame.</small></span>
                 {session.captures?.back ? <CheckCircle2 className="capture-check" /> : <Camera className="capture-action" />}
                 <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("back", event.target.files[0])} />
-              </label>
-              <div className={`mobile-capture-card face-card ${session.captures?.liveness ? "complete" : ""}`}>
+              </label>}
+              {!documentOnly && <div className={`mobile-capture-card face-card ${session.captures?.liveness ? "complete" : ""}`}>
                 <span className="mobile-step-number">3</span><Smartphone size={25} />
                 <span><strong>Live face</strong><small>Keep only your face visible and follow the actions in order.</small></span>
                 {session.captures?.liveness ? <CheckCircle2 className="capture-check" /> : <Video className="capture-action" />}
-              </div>
+              </div>}
             </div>
 
-            {!session.captures?.liveness && (
+            {!documentOnly && !session.captures?.liveness && (
               <section className="mobile-camera-panel">
                 <div className="liveness-challenge">
                   {(session.challenge || []).map((action, index) => <span key={`${action}-${index}`}><b>{index + 1}</b>{readableAction(action)}</span>)}
@@ -192,7 +195,7 @@ export default function MobileIdentityVerification() {
             )}
 
             <button className="button mobile-submit" disabled={!completeCapture || busy} onClick={complete}>
-              {busy ? <LoaderCircle className="spin" size={18} /> : <ShieldCheck size={18} />} Submit for secure cross-check
+              {busy ? <LoaderCircle className="spin" size={18} /> : <ShieldCheck size={18} />} {documentOnly ? "Submit NID for verification" : "Submit for secure cross-check"}
             </button>
           </>
         )}
@@ -201,7 +204,7 @@ export default function MobileIdentityVerification() {
           <div className="mobile-submitted">
             <CheckCircle2 size={48} />
             <h1>Captures submitted</h1>
-            <p>The secure session is now {session.status.replaceAll("_", " ").toLowerCase()}. You may close this page and return the phone to the officer.</p>
+            <p>The secure session is now {session.status.replaceAll("_", " ").toLowerCase()}. You may close this page and return to the laptop.</p>
           </div>
         )}
       </section>

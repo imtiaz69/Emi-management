@@ -35,6 +35,7 @@ const artifactRules = {
 };
 
 const createSchema = z.object({ buyerId: z.string().min(12).max(40) });
+const buyerStartSchema = z.object({ mode: z.enum(["direct", "mobile"]).optional().default("direct") }).default({});
 const tokenSchema = z.object({ token: z.string().min(32).max(200) });
 const kindSchema = z.object({ kind: z.enum(["front", "back", "liveness"]), captureMode: z.enum(["video", "selfie"]).optional() });
 const artifactSchema = z.object({
@@ -53,6 +54,7 @@ router.post(
   authenticate,
   authorize("buyer"),
   requireVerified,
+  validateBody(buyerStartSchema),
   asyncHandler(async (req, res) => {
     const readiness = await getBuyerReadiness(req.user._id);
     if (readiness.hasKyc) {
@@ -73,20 +75,25 @@ router.post(
       { buyerId: req.user._id, verificationType: "nid_cross_check", status: { $in: ["CREATED", "CAPTURING"] } },
       { $set: { status: "CANCELLED", purgeAt: now }, $unset: { linkTokenHash: 1, uploadTokenHash: 1 } }
     );
-    const uploadToken = randomToken();
+    const mobileCapture = req.body.mode === "mobile";
+    const sessionToken = randomToken();
     const session = await IdentityVerificationSession.create({
       buyerId: req.user._id,
       initiatedBy: req.user._id,
       initiatorRole: "buyer",
       verificationType: "nid_cross_check",
-      uploadTokenHash: hashToken(uploadToken),
+      ...(mobileCapture
+        ? { linkTokenHash: hashToken(sessionToken) }
+        : { uploadTokenHash: hashToken(sessionToken) }),
       expiresAt: new Date(Date.now() + sessionTtlMs()),
-      status: "CAPTURING",
+      status: mobileCapture ? "CREATED" : "CAPTURING",
       captureMode: "document_only",
       challenge: []
     });
     await writeAudit(req.user._id, "identity.nid_session.created", "IdentityVerificationSession", session._id);
-    res.status(201).json({ uploadToken, session: publicSession(session) });
+    res.status(201).json(mobileCapture
+      ? { mobileUrl: mobileUrl(sessionToken), session: publicSession(session) }
+      : { uploadToken: sessionToken, session: publicSession(session) });
   })
 );
 
