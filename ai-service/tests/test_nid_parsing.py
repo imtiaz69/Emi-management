@@ -20,6 +20,19 @@ def test_back_side_print_date_is_never_treated_as_date_of_birth():
     assert "dateOfBirth" not in parse_ocr_fields(text)
 
 
+def test_real_nid_layout_prefers_english_name_and_mixed_dob_separator():
+    text = """National ID Card / জাতীয় পরিচয় পত্র
+নাম: ইমতিয়াজ আহাম্মেদ
+বি =, Name:/ IMTIAZ AHMED
+Date of Birth:31 Dec-2002
+ID NO: 6463188984"""
+    assert parse_ocr_fields(text) == {
+        "name": "IMTIAZ AHMED",
+        "nidNumber": "6463188984",
+        "dateOfBirth": "2002-12-31",
+    }
+
+
 def test_reconstructs_ocr_lines_without_a_second_tesseract_pass():
     data = {
         "text": ["Name:", "Demo", "Buyer", "", "NID:", "1234567890"],

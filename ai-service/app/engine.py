@@ -69,7 +69,8 @@ def ocr_variants(image: np.ndarray) -> list[np.ndarray]:
 
 DATE_LABEL_PATTERN = r"(?:D[A4]TE\s*(?:OF\s*)?B[I1L]R[T7]H|D[O0]B|জন্ম\s*তারিখ)"
 MONTH_PATTERN = r"(?:JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)"
-DATE_VALUE_PATTERN = rf"(?:\d{{1,2}}\s+{MONTH_PATTERN}\s+\d{{4}}|{MONTH_PATTERN}\s+\d{{1,2}},?\s+\d{{4}}|\d{{4}}[./-]\d{{1,2}}[./-]\d{{1,2}}|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{4}})"
+DATE_SEPARATOR = r"(?:\s+|\s*[-/.]\s*)"
+DATE_VALUE_PATTERN = rf"(?:\d{{1,2}}{DATE_SEPARATOR}{MONTH_PATTERN}{DATE_SEPARATOR}\d{{4}}|{MONTH_PATTERN}{DATE_SEPARATOR}\d{{1,2}},?{DATE_SEPARATOR}\d{{4}}|\d{{4}}[./-]\d{{1,2}}[./-]\d{{1,2}}|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{4}})"
 NID_BACK_PATTERN = r"(?:BLOOD\s*GROUP|BIRTH\s*PLACE|PLACE\s*OF\s*BIRTH|PRINT(?:ED|ING)?|রক্তের\s*গ্রুপ|জন্মস্থান|মুদ্রণ)"
 
 
@@ -94,14 +95,25 @@ def parse_ocr_fields(raw_text: str) -> dict:
     date_of_birth = extract_ocr_date(raw_text)
     if date_of_birth:
         fields["dateOfBirth"] = date_of_birth
+    # Bangladesh NIDs commonly contain both Bengali and English names. The
+    # buyer profile uses the English account name, so prefer that OCR line.
     for index, line in enumerate(lines):
-        inline_name = re.search(r"(?:\bNAME|নাম)\s*[:\-]?\s*(.+?)\s*$", line, re.I)
+        inline_name = re.search(r"\bNAME\s*[:\-]?\s*[/|]?\s*(.+?)\s*$", line, re.I)
         if inline_name:
             fields["name"] = normalize_text(inline_name.group(1))
             break
-        if normalize_text(line) in {"NAME", "নাম"} and index + 1 < len(lines):
+        if normalize_text(line) == "NAME" and index + 1 < len(lines):
             fields["name"] = normalize_text(lines[index + 1])
             break
+    if not fields.get("name"):
+        for index, line in enumerate(lines):
+            inline_name = re.search(r"নাম\s*[:\-]?\s*(.+?)\s*$", line)
+            if inline_name:
+                fields["name"] = normalize_text(inline_name.group(1))
+                break
+            if normalize_text(line) == "নাম" and index + 1 < len(lines):
+                fields["name"] = normalize_text(lines[index + 1])
+                break
     return normalize_fields(fields)
 
 
