@@ -3063,6 +3063,7 @@ body.dashboard-drawer-open {
 .nid-upload-box.disabled:hover { border-color: #9ebeb7; background: #f3f5f4; }
 .nid-upload-box > strong, .nid-upload-box > small, .nid-upload-box > .nid-file-name { grid-column: 1 / -1; }
 .nid-upload-box > strong { margin-top: 5px; color: #173f37; }
+.optional-label { display: inline-block; margin-left: 5px; padding: 2px 5px; border-radius: 4px; background: #e8efed; color: #60726e; font-size: 0.66rem; vertical-align: middle; }
 .nid-upload-box > small { min-height: 36px; color: var(--color-muted); line-height: 1.45; }
 .nid-upload-box input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .nid-file-name { width: fit-content; max-width: 100%; overflow: hidden; padding: 6px 8px; border-radius: 5px; background: #e1efeb; color: #245d51; font-size: 0.76rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }

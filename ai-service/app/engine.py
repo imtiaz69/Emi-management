@@ -58,6 +58,15 @@ def image_quality(image: np.ndarray) -> tuple[bool, list[str]]:
     return not warnings, warnings
 
 
+def bounded_image(image: np.ndarray, max_side: int) -> np.ndarray:
+    height, width = image.shape[:2]
+    longest = max(height, width)
+    if longest <= max_side:
+        return image
+    scale = max_side / longest
+    return cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+
+
 def ocr_variants(image: np.ndarray) -> list[np.ndarray]:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     scale = max(1.0, 1400 / max(gray.shape))
@@ -422,6 +431,9 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
         back_image = cv2.imread(str(back_path)) if not document_mode else None
         if front_image is None or (not document_mode and back_image is None):
             raise ValueError("A required document image could not be decoded")
+        front_image = bounded_image(front_image, 1800)
+        if back_image is not None:
+            back_image = bounded_image(back_image, 1800)
         ocr = extract_ocr(front_image, fast=document_mode)
         qr = {"status": "NOT_REQUIRED", "rawData": "", "fields": {}} if document_mode else decode_qr(back_image)
         if capture_mode == "document_only":
@@ -432,6 +444,7 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
             live_image = cv2.imread(str(live_path)) if selfie_mode else sharpest_video_frame(live_path, face_engine)
             face = {"detected": False, "qualityAcceptable": False, "similarity": 0.0, "warnings": ["A live face frame could not be decoded."]}
             if live_image is not None:
+                live_image = bounded_image(live_image, 1280)
                 face = face_engine.compare(front_image, live_image)
             liveness = {"status": "NOT_AVAILABLE", "warnings": ["A still selfie does not include liveness."]} if selfie_mode else analyze_liveness(live_path, challenge)
         return {

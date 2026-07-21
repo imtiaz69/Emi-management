@@ -187,12 +187,11 @@ export default function BuyerPortal() {
     mutationFn: async () => {
       if (buyerProfile.data?.readiness?.identityLocked) throw new Error("Your NID is already verified and locked.");
       if (!nidFrontFile) throw new Error("Select a clear image of the front of your NID.");
-      if (!nidSelfieFile) throw new Error("Capture or select a clear live selfie.");
       setNidVerificationProgress("Creating a secure verification session...");
       const { data: created } = await api.post("/identity-verifications/buyer/start");
       setNidVerificationId(created.session._id);
       await uploadNidArtifact("front", nidFrontFile, created.uploadToken);
-      await uploadNidArtifact("liveness", nidSelfieFile, created.uploadToken, "selfie");
+      if (nidSelfieFile) await uploadNidArtifact("liveness", nidSelfieFile, created.uploadToken, "selfie");
       setNidVerificationProgress("Comparing the NID information with your buyer profile...");
       const { data } = await api.post(
         "/identity-verifications/mobile/complete",
@@ -576,7 +575,7 @@ export default function BuyerPortal() {
                   <div>
                     <span className="identity-eyebrow"><ShieldCheck size={15} /> EMI identity requirement</span>
                     <h2>Verify your Bangladesh NID front</h2>
-                    <p>Provide the NID front and a live selfie. The system compares your profile information and checks whether your face matches the NID portrait by at least 60%.</p>
+                    <p>Provide the NID front to compare it with your profile. You may also add a selfie for an optional 60% face-similarity check.</p>
                   </div>
                   <div className="nid-approval-state">
                     <span>EMI permission</span>
@@ -621,7 +620,7 @@ export default function BuyerPortal() {
                       <label className={`nid-upload-box ${nidSelfieFile ? "selected" : ""} ${!profileComplete || identityLocked ? "disabled" : ""}`}>
                         <span className="mobile-step-number">2</span>
                         <UserRound size={28} />
-                        <strong>Live selfie</strong>
+                        <strong>Live selfie <span className="optional-label">Optional</span></strong>
                         <small>Face the camera directly in good light, without a mask, filter, or another person.</small>
                         <span className="nid-file-name">{nidSelfieFile?.name || "Capture or choose selfie"}</span>
                         <input type="file" accept="image/jpeg,image/png,image/webp" capture="user" disabled={!profileComplete || identityLocked} onChange={(event) => setNidSelfieFile(event.target.files?.[0] || null)} />
@@ -629,7 +628,7 @@ export default function BuyerPortal() {
                     </div>
 
                     <div className="nid-verify-actions">
-                      <button className="button" onClick={() => verifyNid.mutate()} disabled={identityLocked || !profileComplete || !nidFrontFile || !nidSelfieFile || verifyNid.isPending}>
+                      <button className="button" onClick={() => verifyNid.mutate()} disabled={identityLocked || !profileComplete || !nidFrontFile || verifyNid.isPending}>
                         {identityLocked ? <LockKeyhole size={17} /> : verifyNid.isPending ? <LoaderCircle className="spin" size={17} /> : <FileCheck2 size={17} />}
                         {identityLocked ? "NID verified" : "Verify NID"}
                       </button>

@@ -85,7 +85,10 @@ async function runIdentityVerificationJobs() {
         });
       } catch (error) {
         const attempts = Number(session.processingAttempts || 0);
-        session.lastError = String(error.message || "Identity processing failed").slice(0, 300);
+        const technicalMessage = String(error.message || "Identity processing failed");
+        session.lastError = /fetch failed|aborted|ECONN|timeout/i.test(technicalMessage)
+          ? "The verification service was temporarily unavailable. Please submit the verification again."
+          : technicalMessage.slice(0, 300);
         session.processingLeaseAt = undefined;
         if (attempts < 3) {
           session.status = "QUEUED";
