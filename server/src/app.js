@@ -38,7 +38,16 @@ const { authenticate, authorize } = require("./middleware/auth");
 const { createRateLimiter, mongoSanitize } = require("./middleware/security");
 
 const app = express();
-const clientOrigins = (process.env.CLIENT_URL || "http://localhost:5173").split(",").map((value) => value.trim()).filter(Boolean);
+if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
+
+const clientOrigins = new Set(
+  [process.env.CLIENT_URL, process.env.PUBLIC_CLIENT_URL]
+    .filter(Boolean)
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim().replace(/\/$/, ""))
+    .filter(Boolean)
+);
+if (!clientOrigins.size) clientOrigins.add("http://localhost:5173");
 const isDevelopmentLocalOrigin = (origin) => {
   if (process.env.NODE_ENV === "production") return false;
   try {
@@ -64,7 +73,8 @@ app.use(
 );
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || clientOrigins.includes(origin) || isDevelopmentLocalOrigin(origin)) return callback(null, true);
+    const normalizedOrigin = String(origin || "").replace(/\/$/, "");
+    if (!origin || clientOrigins.has(normalizedOrigin) || isDevelopmentLocalOrigin(origin)) return callback(null, true);
     return callback(new Error("Origin is not allowed by CORS"));
   },
   credentials: true
