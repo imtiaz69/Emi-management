@@ -26,6 +26,24 @@ const buyerProfileSchema = z.object({
   employmentType: z.enum(["salaried", "self_employed", "business_owner", "student", "unemployed", "other"])
 });
 
+function readinessResponse(readiness) {
+  return {
+    ready: readiness.ready,
+    missingFields: readiness.missingFields,
+    hasKyc: readiness.hasKyc,
+    identityLocked: readiness.hasKyc
+  };
+}
+
+function identityChanges(user, profile, next) {
+  const compact = (value) => String(value || "").trim().replace(/\s+/g, " ");
+  const changed = [];
+  if (compact(user?.name) !== compact(next.name)) changed.push("name");
+  if (compact(profile?.nidNumber) !== compact(next.nidNumber)) changed.push("NID number");
+  if (compact(profile?.dateOfBirth) !== compact(next.dateOfBirth)) changed.push("date of birth");
+  return changed;
+}
+
 router.get(
   "/profile",
   authenticate,
@@ -33,7 +51,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const profile = await BuyerProfile.findOneAndUpdate({ userId: req.user._id }, { $setOnInsert: { userId: req.user._id } }, { new: true, upsert: true });
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ accountName: req.user.name, profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ accountName: req.user.name, profile: sanitizeBuyerProfile(profile), readiness: readinessResponse(readiness) });
   })
 );
 
@@ -43,7 +61,16 @@ router.patch(
   authorize("buyer"),
   validateBody(buyerProfileSchema),
   asyncHandler(async (req, res) => {
-    const previous = await BuyerProfile.findOne({ userId: req.user._id }).select("nidNumber dateOfBirth");
+    const readinessBefore = await getBuyerReadiness(req.user._id);
+    const previous = readinessBefore.profile;
+    const lockedChanges = readinessBefore.hasKyc ? identityChanges(req.user, previous, req.body) : [];
+    if (lockedChanges.length) {
+      return res.status(409).json({
+        message: `Verified identity information cannot be changed: ${lockedChanges.join(", ")}.`,
+        code: "IDENTITY_FIELDS_LOCKED",
+        lockedFields: ["name", "nidNumber", "dateOfBirth"]
+      });
+    }
     const normalizedPreviousName = String(req.user.name || "").trim().replace(/\s+/g, " ").toUpperCase();
     const normalizedNextName = String(req.body.name || "").trim().replace(/\s+/g, " ").toUpperCase();
     const identityChanged = previous && (
@@ -63,7 +90,7 @@ router.patch(
       );
     }
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ accountName: name, profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ accountName: name, profile: sanitizeBuyerProfile(profile), readiness: readinessResponse(readiness) });
   })
 );
 
@@ -88,7 +115,7 @@ router.post(
     await writeAudit(req.user._id, "buyer.profile_photo.updated", "BuyerProfile", currentProfile._id);
 
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ accountName: req.user.name, profile: sanitizeBuyerProfile(currentProfile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ accountName: req.user.name, profile: sanitizeBuyerProfile(currentProfile), readiness: readinessResponse(readiness) });
   })
 );
 

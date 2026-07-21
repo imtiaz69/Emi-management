@@ -21,7 +21,7 @@ const {
 } = require("../services/identityVerificationService");
 const { writeAudit } = require("../services/auditService");
 const { createNotification } = require("../services/notificationService");
-const { getMissingProfileFields } = require("../services/buyerReadinessService");
+const { getBuyerReadiness } = require("../services/buyerReadinessService");
 const { runIdentityVerificationJobs } = require("../jobs/identityVerificationJob");
 
 const router = express.Router();
@@ -54,8 +54,14 @@ router.post(
   authorize("buyer"),
   requireVerified,
   asyncHandler(async (req, res) => {
-    const profile = await BuyerProfile.findOne({ userId: req.user._id });
-    const missingFields = getMissingProfileFields(profile);
+    const readiness = await getBuyerReadiness(req.user._id);
+    if (readiness.hasKyc) {
+      return res.status(409).json({
+        message: "Your NID is already verified. Identity verification is now locked.",
+        code: "IDENTITY_ALREADY_VERIFIED"
+      });
+    }
+    const missingFields = readiness.missingFields;
     if (missingFields.length) {
       return res.status(400).json({
         message: `Complete your buyer profile before NID verification. Missing: ${missingFields.join(", ")}.`,
@@ -271,6 +277,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const session = req.verificationSession;
     const documentOnly = session.verificationType === "nid_cross_check";
+    if (documentOnly && (await getBuyerReadiness(session.buyerId)).hasKyc) {
+      return res.status(409).json({
+        message: "This buyer's NID is already verified. Another verification cannot be submitted.",
+        code: "IDENTITY_ALREADY_VERIFIED"
+      });
+    }
     if (!session.artifacts?.front?.publicId || (!documentOnly && (!session.artifacts?.back?.publicId || !session.artifacts?.liveness?.publicId))) {
       return res.status(400).json({ message: documentOnly ? "The front NID image is required" : "Front, back, and live face captures are required" });
     }

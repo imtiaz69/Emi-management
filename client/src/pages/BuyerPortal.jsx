@@ -13,6 +13,7 @@ import {
   History,
   LayoutDashboard,
   LoaderCircle,
+  LockKeyhole,
   ShieldCheck,
   ShoppingCart,
   Star,
@@ -177,6 +178,7 @@ export default function BuyerPortal() {
 
   const verifyNid = useMutation({
     mutationFn: async () => {
+      if (buyerProfile.data?.readiness?.identityLocked) throw new Error("Your NID is already verified and locked.");
       if (!nidFrontFile) throw new Error("Select a clear image of the front of your NID.");
       setNidVerificationProgress("Creating a secure verification session...");
       const { data: created } = await api.post("/identity-verifications/buyer/start");
@@ -340,6 +342,7 @@ export default function BuyerPortal() {
   const nextDueAmount = (loans.data || []).reduce((sum, loan) => sum + Number(loan.paymentSummary?.nextDueAmount || 0), 0);
   const profileMissingFields = buyerProfile.data?.readiness?.missingFields || [];
   const profileComplete = Boolean(buyerProfile.data) && profileMissingFields.length === 0;
+  const identityLocked = Boolean(buyerProfile.data?.readiness?.identityLocked);
   const paymentModalLoan = (loans.data || []).find((loan) => loan._id === paymentModalLoanId);
   const paymentModalDraft = paymentModalLoan ? paymentDrafts[paymentModalLoan._id] || { allocationMode: "next_due", installmentCount: "2", amount: "" } : null;
   const paymentModalPayload = paymentModalLoan ? buildPaymentPayload(paymentModalLoan) : null;
@@ -477,6 +480,12 @@ export default function BuyerPortal() {
           {activeTab === "profile" && (
             <section className="panel">
               <h2>Buyer profile</h2>
+              {identityLocked && (
+                <div className="notice success">
+                  <strong><LockKeyhole size={16} /> Verified identity locked</strong>
+                  <p>Your verified full name, NID number, and date of birth cannot be changed. Other profile information remains editable.</p>
+                </div>
+              )}
               <div className="profile-photo-panel">
                 <ProtectedImage
                   src={buyerProfile.data?.profile?.profilePhoto?.downloadUrl}
@@ -496,16 +505,16 @@ export default function BuyerPortal() {
               </div>
               <div className="form-grid compact">
                 <label>Full name used for verification
-                  <input value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} placeholder="Enter your name exactly as shown on the NID" />
+                  <input value={profileForm.name} disabled={identityLocked} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} placeholder="Enter your name exactly as shown on the NID" />
                 </label>
                 <label>Address
                   <input value={profileForm.address} onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })} placeholder="Example: Akhalia, Sylhet" />
                 </label>
                 <label>NID number
-                  <input value={profileForm.nidNumber} onChange={(e) => setProfileForm({ ...profileForm, nidNumber: e.target.value })} placeholder="Example: 1234567890" />
+                  <input value={profileForm.nidNumber} disabled={identityLocked} onChange={(e) => setProfileForm({ ...profileForm, nidNumber: e.target.value })} placeholder="Example: 1234567890" />
                 </label>
                 <label>Date of birth
-                  <input type="date" value={profileForm.dateOfBirth} onChange={(e) => setProfileForm({ ...profileForm, dateOfBirth: e.target.value })} />
+                  <input type="date" value={profileForm.dateOfBirth} disabled={identityLocked} onChange={(e) => setProfileForm({ ...profileForm, dateOfBirth: e.target.value })} />
                 </label>
                 <label>Emergency contact name
                   <input value={profileForm.emergencyContactName} onChange={(e) => setProfileForm({ ...profileForm, emergencyContactName: e.target.value })} placeholder="Example: Parent or spouse" />
@@ -557,21 +566,28 @@ export default function BuyerPortal() {
                   </div>
                 )}
 
+                {identityLocked && (
+                  <div className="notice success">
+                    <strong><LockKeyhole size={16} /> NID verification completed</strong>
+                    <p>Your approved identity is locked, so another NID verification cannot be submitted.</p>
+                  </div>
+                )}
+
                 <div className="nid-upload-grid front-only">
-                  <label className={`nid-upload-box ${nidFrontFile ? "selected" : ""} ${!profileComplete ? "disabled" : ""}`}>
+                  <label className={`nid-upload-box ${nidFrontFile ? "selected" : ""} ${!profileComplete || identityLocked ? "disabled" : ""}`}>
                     <span className="mobile-step-number">1</span>
                     <CreditCard size={28} />
                     <strong>Front side of NID</strong>
                     <small>Keep the name, NID number, and date of birth sharp and readable.</small>
                     <span className="nid-file-name">{nidFrontFile?.name || "Choose front image"}</span>
-                    <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!profileComplete} onChange={(event) => setNidFrontFile(event.target.files?.[0] || null)} />
+                    <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!profileComplete || identityLocked} onChange={(event) => setNidFrontFile(event.target.files?.[0] || null)} />
                   </label>
                 </div>
 
                 <div className="nid-verify-actions">
-                  <button className="button" onClick={() => verifyNid.mutate()} disabled={!profileComplete || !nidFrontFile || verifyNid.isPending}>
-                    {verifyNid.isPending ? <LoaderCircle className="spin" size={17} /> : <FileCheck2 size={17} />}
-                    Verify NID
+                  <button className="button" onClick={() => verifyNid.mutate()} disabled={identityLocked || !profileComplete || !nidFrontFile || verifyNid.isPending}>
+                    {identityLocked ? <LockKeyhole size={17} /> : verifyNid.isPending ? <LoaderCircle className="spin" size={17} /> : <FileCheck2 size={17} />}
+                    {identityLocked ? "NID verified" : "Verify NID"}
                   </button>
                   <p>The image is stored privately and removed after the configured review period. This compares the supplied card with your profile; it is not a government database check.</p>
                 </div>

@@ -184,6 +184,62 @@ describe("identity verification session routes", () => {
     const approved = await request(app).get("/api/buyer/profile").set("Authorization", auth(buyer));
     expect(approved.body.readiness.ready).toBe(true);
     expect(approved.body.readiness.hasKyc).toBe(true);
+    expect(approved.body.readiness.identityLocked).toBe(true);
+  });
+
+  it("locks verified identity fields while allowing other profile updates", async () => {
+    await KYCDocument.create({
+      userId: buyer._id,
+      type: "nid",
+      files: [],
+      status: "approved",
+      verificationMethod: "identity_cross_validation"
+    });
+    const profilePayload = {
+      name: "Related Buyer",
+      address: "Updated Sylhet address",
+      nidNumber: "1234567890",
+      dateOfBirth: "1998-05-15",
+      emergencyContactName: "Trusted Contact",
+      emergencyContactPhone: "01700000000",
+      monthlyIncome: 32000,
+      occupation: "Engineer",
+      employmentType: "salaried"
+    };
+
+    const changedIdentity = await request(app)
+      .patch("/api/buyer/profile")
+      .set("Authorization", auth(buyer))
+      .send({ ...profilePayload, name: "Changed Buyer" });
+    expect(changedIdentity.status).toBe(409);
+    expect(changedIdentity.body.code).toBe("IDENTITY_FIELDS_LOCKED");
+    expect(changedIdentity.body.lockedFields).toEqual(["name", "nidNumber", "dateOfBirth"]);
+
+    const changedAddress = await request(app)
+      .patch("/api/buyer/profile")
+      .set("Authorization", auth(buyer))
+      .send(profilePayload);
+    expect(changedAddress.status).toBe(200);
+    expect(changedAddress.body.profile.address).toBe("Updated Sylhet address");
+    expect(changedAddress.body.readiness.identityLocked).toBe(true);
+
+    const savedUser = await User.findById(buyer._id);
+    expect(savedUser.name).toBe("Related Buyer");
+  });
+
+  it("prevents an already verified buyer from starting another NID verification", async () => {
+    await KYCDocument.create({
+      userId: buyer._id,
+      type: "nid",
+      files: [],
+      status: "approved",
+      verificationMethod: "identity_cross_validation"
+    });
+    const response = await request(app)
+      .post("/api/identity-verifications/buyer/start")
+      .set("Authorization", auth(buyer));
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("IDENTITY_ALREADY_VERIFIED");
   });
 
   it("uses the latest NID verification instead of an older approval", async () => {
