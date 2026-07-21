@@ -42,6 +42,11 @@ def test_front_ocr_tolerates_captured_photo_birth_and_month_mistakes():
     assert fields == {"name": "IMTIAZ AHMED", "nidNumber": "6463188984", "dateOfBirth": "2002-12-31"}
 
 
+def test_front_ocr_accepts_camera_inserted_date_punctuation():
+    fields = parse_ocr_fields("Name: IMTIAZ AHMED\nDate’ of Birth>31'Dec2002\nID NO: 6463188984")
+    assert fields == {"name": "IMTIAZ AHMED", "nidNumber": "6463188984", "dateOfBirth": "2002-12-31"}
+
+
 def test_ocr_attempts_keep_the_strongest_name_and_consistent_identity_fields():
     attempts = [
         {"confidence": 0.87, "fields": {"name": "TAF SHEIKH", "nidNumber": "63849492839", "dateOfBirth": "2002-01-07"}},

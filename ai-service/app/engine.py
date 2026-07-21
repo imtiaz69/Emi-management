@@ -87,7 +87,7 @@ def ocr_variants(image: np.ndarray) -> list[np.ndarray]:
 
 DATE_LABEL_PATTERN = r"(?:D[A4]TE\s*(?:OF\s*)?B[I1L][RNH][T7N]?H?|D[O0]B|জন্ম\s*তারিখ)"
 MONTH_PATTERN = r"(?:JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DE[CO0](?:EMBER)?)"
-DATE_SEPARATOR = r"(?:\s+|\s*[-/.]\s*)"
+DATE_SEPARATOR = r"\s*['’\-/.]?\s*"
 DATE_VALUE_PATTERN = rf"(?:\d{{1,2}}{DATE_SEPARATOR}{MONTH_PATTERN}{DATE_SEPARATOR}\d{{4}}|{MONTH_PATTERN}{DATE_SEPARATOR}\d{{1,2}},?{DATE_SEPARATOR}\d{{4}}|\d{{4}}[./-]\d{{1,2}}[./-]\d{{1,2}}|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{4}})"
 NID_BACK_PATTERN = r"(?:BLOOD\s*GROUP|BIRTH\s*PLACE|PLACE\s*OF\s*BIRTH|PRINT(?:ED|ING)?|রক্তের\s*গ্রুপ|জন্মস্থান|মুদ্রণ)"
 
@@ -97,7 +97,7 @@ def extract_ocr_date(raw_text: str) -> str:
     translated = re.sub(r"\b(?:DEO|DE0|0EC|D3C)\b", "DEC", translated, flags=re.I)
     translated = re.sub(r"(?<=\d)[OQ](?=\d)", "0", translated, flags=re.I)
     translated = re.sub(r"(?<=\d)[IL](?=\d)", "1", translated, flags=re.I)
-    labelled = re.search(rf"{DATE_LABEL_PATTERN}\s*[:;,\-]?\s*({DATE_VALUE_PATTERN})", translated, re.I)
+    labelled = re.search(rf"{DATE_LABEL_PATTERN}\s*[:;,>'’\-]?\s*({DATE_VALUE_PATTERN})", translated, re.I)
     candidates = [labelled.group(1)] if labelled else (
         [] if re.search(NID_BACK_PATTERN, translated, re.I) else re.findall(DATE_VALUE_PATTERN, translated, re.I)
     )
@@ -224,6 +224,9 @@ def targeted_date_from_ocr_data(image: np.ndarray, data: dict) -> str:
         normalized_label = normalize_text(line_text)
         if "DATE" not in normalized_label and "DOB" not in normalized_label and "জন্ম" not in line_text:
             continue
+        date = extract_ocr_date(line_text)
+        if date:
+            return date
         left, top = min(word["left"] for word in words), min(word["top"] for word in words)
         right = max(word["left"] + word["width"] for word in words)
         bottom = max(word["top"] + word["height"] for word in words)
@@ -279,7 +282,7 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
     quality_ok, warnings = image_quality(image)
     attempts = []
     variants = ocr_variants(image)
-    selected_variants = [variants[1], variants[0]] if fast else variants
+    selected_variants = [variants[1], variants[0], variants[2]] if fast else variants
     language = os.getenv("TESSERACT_PROFILE_LANG", "eng") if fast else os.getenv("TESSERACT_LANG", "ben+eng")
     for variant in selected_variants:
         data = pytesseract.image_to_data(Image.fromarray(variant), lang=language, config="--psm 6", output_type=Output.DICT)
