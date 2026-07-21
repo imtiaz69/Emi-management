@@ -91,7 +91,7 @@ describe("identity verification session routes", () => {
     expect(created.status).toBe(201);
     expect(created.body.uploadToken).toHaveLength(43);
     expect(created.body.session.verificationType).toBe("nid_cross_check");
-    expect(created.body.session.captureMode).toBe("document_only");
+    expect(created.body.session.captureMode).toBe("document_selfie");
 
     const ownerView = await request(app)
       .get(`/api/identity-verifications/buyer/${created.body.session._id}`)
@@ -111,7 +111,7 @@ describe("identity verification session routes", () => {
     expect(created.status).toBe(201);
     expect(created.body.uploadToken).toBeUndefined();
     expect(created.body.session.status).toBe("CREATED");
-    expect(created.body.session.captureMode).toBe("document_only");
+    expect(created.body.session.captureMode).toBe("document_selfie");
     expect(created.body.mobileUrl).toMatch(/^https:\/\/client\.test\/verify\/mobile#/);
 
     const linkToken = created.body.mobileUrl.split("#")[1];

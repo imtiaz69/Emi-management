@@ -138,9 +138,10 @@ export default function MobileIdentityVerification() {
     }
   }
 
-  const documentOnly = session?.verificationType === "nid_cross_check" || session?.captureMode === "document_only";
+  const documentOnly = session?.verificationType === "nid_cross_check" || ["document_only", "document_selfie"].includes(session?.captureMode);
+  const documentSelfie = session?.captureMode === "document_selfie";
   const completeCapture = documentOnly
-    ? session?.captures?.front
+    ? session?.captures?.front && (!documentSelfie || session?.captures?.liveness)
     : session?.captures?.front && session?.captures?.back && session?.captures?.liveness;
   const submitted = ["QUEUED", "WAKING_AI", "PROCESSING", "COMPLETED"].includes(session?.status);
 
@@ -176,6 +177,12 @@ export default function MobileIdentityVerification() {
                 <span><strong>Live face</strong><small>Keep only your face visible and follow the actions in order.</small></span>
                 {session.captures?.liveness ? <CheckCircle2 className="capture-check" /> : <Video className="capture-action" />}
               </div>}
+              {documentSelfie && <label className={`mobile-capture-card ${session.captures?.liveness ? "complete" : ""}`}>
+                <span className="mobile-step-number">2</span><Smartphone size={25} />
+                <span><strong>Live selfie</strong><small>Look directly at the camera. Do not upload another photo or a photo of a screen.</small></span>
+                {session.captures?.liveness ? <CheckCircle2 className="capture-check" /> : <Camera className="capture-action" />}
+                <input type="file" accept="image/jpeg,image/png,image/webp" capture="user" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("liveness", event.target.files[0], "selfie")} />
+              </label>}
             </div>
 
             {!documentOnly && !session.captures?.liveness && (

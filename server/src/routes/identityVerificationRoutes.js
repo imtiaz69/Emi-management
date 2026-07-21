@@ -87,7 +87,7 @@ router.post(
         : { uploadTokenHash: hashToken(sessionToken) }),
       expiresAt: new Date(Date.now() + sessionTtlMs()),
       status: mobileCapture ? "CREATED" : "CAPTURING",
-      captureMode: "document_only",
+      captureMode: "document_selfie",
       challenge: []
     });
     await writeAudit(req.user._id, "identity.nid_session.created", "IdentityVerificationSession", session._id);
@@ -270,7 +270,7 @@ router.post(
       capturedAt: new Date()
     };
     session.pendingUploads[kind] = undefined;
-    if (kind === "liveness") session.captureMode = req.body.captureMode || "video";
+    if (kind === "liveness" && session.verificationType !== "nid_cross_check") session.captureMode = req.body.captureMode || "video";
     session.captureAttempts[kind] = Number(session.captureAttempts[kind] || 0) + 1;
     await session.save();
     res.json(publicSession(session));
@@ -290,10 +290,10 @@ router.post(
         code: "IDENTITY_ALREADY_VERIFIED"
       });
     }
-    if (!session.artifacts?.front?.publicId || (!documentOnly && (!session.artifacts?.back?.publicId || !session.artifacts?.liveness?.publicId))) {
-      return res.status(400).json({ message: documentOnly ? "The front NID image is required" : "Front, back, and live face captures are required" });
+    if (!session.artifacts?.front?.publicId || (documentOnly && !session.artifacts?.liveness?.publicId) || (!documentOnly && (!session.artifacts?.back?.publicId || !session.artifacts?.liveness?.publicId))) {
+      return res.status(400).json({ message: documentOnly ? "The front NID image and a live selfie are required" : "Front, back, and live face captures are required" });
     }
-    const requiredKinds = documentOnly ? ["front"] : ["front", "back", "liveness"];
+    const requiredKinds = documentOnly ? ["front", "liveness"] : ["front", "back", "liveness"];
     if (requiredKinds.some((kind) => Number(session.captureAttempts?.[kind] || 0) > 3)) {
       return res.status(429).json({ message: "Maximum capture attempts exceeded" });
     }

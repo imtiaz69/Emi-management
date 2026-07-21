@@ -58,7 +58,7 @@ const identityVerificationSessionSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true, index: true },
     status: { type: String, enum: SESSION_STATUSES, default: "CREATED", index: true },
     challenge: [{ type: String, enum: ["BLINK", "TURN_LEFT", "TURN_RIGHT"] }],
-    captureMode: { type: String, enum: ["video", "selfie", "document_only"] },
+    captureMode: { type: String, enum: ["video", "selfie", "document_only", "document_selfie"] },
     artifacts: {
       front: artifactSchema,
       back: artifactSchema,

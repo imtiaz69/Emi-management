@@ -71,6 +71,28 @@ describe("identity verification policy", () => {
     expect(result.automatedDecision).toBe("approved");
   });
 
+  it("verifies a buyer NID selfie when face similarity reaches 60 percent", () => {
+    const result = buildDecision(observation({
+      qr: { status: "NOT_REQUIRED", rawData: "", fields: {} },
+      face: { detected: true, qualityAcceptable: true, similarity: 0.6, warnings: [] },
+      liveness: { status: "NOT_AVAILABLE", warnings: [] }
+    }), "document_selfie");
+    expect(result.overallStatus).toBe("VERIFIED");
+    expect(result.checks.faceMatch.status).toBe("PASS");
+    expect(result.scores.faceSimilarity).toBe(0.6);
+  });
+
+  it("rejects a buyer NID selfie below 60 percent similarity", () => {
+    const result = buildDecision(observation({
+      qr: { status: "NOT_REQUIRED", rawData: "", fields: {} },
+      face: { detected: true, qualityAcceptable: true, similarity: 0.59, warnings: [] },
+      liveness: { status: "NOT_AVAILABLE", warnings: [] }
+    }), "document_selfie");
+    expect(result.overallStatus).toBe("FAILED");
+    expect(result.checks.faceMatch.status).toBe("FAIL");
+    expect(result.failureReasons.join(" ")).toContain("60% similarity");
+  });
+
   it.each(["TAFI SHEIKH", "tafi sheikh", "Tafi Sheikh", "tAfI sHeIkH"])(
     "matches profile names regardless of letter case: %s",
     (profileName) => {

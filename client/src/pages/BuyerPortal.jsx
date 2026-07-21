@@ -82,6 +82,7 @@ export default function BuyerPortal() {
   const [kycType, setKycType] = useState("passport");
   const [files, setFiles] = useState([]);
   const [nidFrontFile, setNidFrontFile] = useState(null);
+  const [nidSelfieFile, setNidSelfieFile] = useState(null);
   const [nidCaptureMode, setNidCaptureMode] = useState("upload");
   const [nidMobileLink, setNidMobileLink] = useState("");
   const [nidVerificationId, setNidVerificationId] = useState("");
@@ -157,11 +158,11 @@ export default function BuyerPortal() {
     onError: (err) => notifyError(err, "Unable to upload KYC documents.")
   });
 
-  async function uploadNidArtifact(kind, file, uploadToken) {
+  async function uploadNidArtifact(kind, file, uploadToken, captureMode) {
     setNidVerificationProgress(`Uploading NID ${kind}...`);
     const { data: signed } = await api.post(
       "/identity-verifications/mobile/upload-signature",
-      { kind },
+      { kind, ...(captureMode ? { captureMode } : {}) },
       { headers: verificationHeaders(uploadToken) }
     );
     const form = new FormData();
@@ -177,7 +178,7 @@ export default function BuyerPortal() {
     const uploaded = await response.json();
     await api.post(
       "/identity-verifications/mobile/artifacts",
-      { kind, publicId: uploaded.public_id },
+      { kind, publicId: uploaded.public_id, ...(captureMode ? { captureMode } : {}) },
       { headers: verificationHeaders(uploadToken) }
     );
   }
@@ -186,10 +187,12 @@ export default function BuyerPortal() {
     mutationFn: async () => {
       if (buyerProfile.data?.readiness?.identityLocked) throw new Error("Your NID is already verified and locked.");
       if (!nidFrontFile) throw new Error("Select a clear image of the front of your NID.");
+      if (!nidSelfieFile) throw new Error("Capture or select a clear live selfie.");
       setNidVerificationProgress("Creating a secure verification session...");
       const { data: created } = await api.post("/identity-verifications/buyer/start");
       setNidVerificationId(created.session._id);
       await uploadNidArtifact("front", nidFrontFile, created.uploadToken);
+      await uploadNidArtifact("liveness", nidSelfieFile, created.uploadToken, "selfie");
       setNidVerificationProgress("Comparing the NID information with your buyer profile...");
       const { data } = await api.post(
         "/identity-verifications/mobile/complete",
@@ -201,6 +204,7 @@ export default function BuyerPortal() {
     onSuccess: (session) => {
       setNidVerificationId(session._id);
       setNidFrontFile(null);
+      setNidSelfieFile(null);
       setNidVerificationProgress("Verification is processing. This can take a little longer when the free AI service is waking up.");
       notifyInfo("NID verification submitted.");
     },
@@ -572,7 +576,7 @@ export default function BuyerPortal() {
                   <div>
                     <span className="identity-eyebrow"><ShieldCheck size={15} /> EMI identity requirement</span>
                     <h2>Verify your Bangladesh NID front</h2>
-                    <p>Upload a clear photo of the front. The system reads the full name, NID number, and date of birth and compares them with your completed buyer profile.</p>
+                    <p>Provide the NID front and a live selfie. The system compares your profile information and checks whether your face matches the NID portrait by at least 60%.</p>
                   </div>
                   <div className="nid-approval-state">
                     <span>EMI permission</span>
@@ -605,7 +609,7 @@ export default function BuyerPortal() {
 
                 {nidCaptureMode === "upload" && (
                   <>
-                    <div className="nid-upload-grid front-only">
+                    <div className="nid-upload-grid">
                       <label className={`nid-upload-box ${nidFrontFile ? "selected" : ""} ${!profileComplete || identityLocked ? "disabled" : ""}`}>
                         <span className="mobile-step-number">1</span>
                         <CreditCard size={28} />
@@ -614,10 +618,18 @@ export default function BuyerPortal() {
                         <span className="nid-file-name">{nidFrontFile?.name || "Choose front image"}</span>
                         <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!profileComplete || identityLocked} onChange={(event) => setNidFrontFile(event.target.files?.[0] || null)} />
                       </label>
+                      <label className={`nid-upload-box ${nidSelfieFile ? "selected" : ""} ${!profileComplete || identityLocked ? "disabled" : ""}`}>
+                        <span className="mobile-step-number">2</span>
+                        <UserRound size={28} />
+                        <strong>Live selfie</strong>
+                        <small>Face the camera directly in good light, without a mask, filter, or another person.</small>
+                        <span className="nid-file-name">{nidSelfieFile?.name || "Capture or choose selfie"}</span>
+                        <input type="file" accept="image/jpeg,image/png,image/webp" capture="user" disabled={!profileComplete || identityLocked} onChange={(event) => setNidSelfieFile(event.target.files?.[0] || null)} />
+                      </label>
                     </div>
 
                     <div className="nid-verify-actions">
-                      <button className="button" onClick={() => verifyNid.mutate()} disabled={identityLocked || !profileComplete || !nidFrontFile || verifyNid.isPending}>
+                      <button className="button" onClick={() => verifyNid.mutate()} disabled={identityLocked || !profileComplete || !nidFrontFile || !nidSelfieFile || verifyNid.isPending}>
                         {identityLocked ? <LockKeyhole size={17} /> : verifyNid.isPending ? <LoaderCircle className="spin" size={17} /> : <FileCheck2 size={17} />}
                         {identityLocked ? "NID verified" : "Verify NID"}
                       </button>
@@ -628,7 +640,7 @@ export default function BuyerPortal() {
 
                 {nidCaptureMode === "phone" && !nidMobileLink && (
                   <section className="nid-phone-start">
-                    <div><QrCode size={30} /><h3>Use your phone camera</h3><p>Create a private QR code, scan it with your phone, and capture the front of the NID using the rear camera.</p></div>
+                    <div><QrCode size={30} /><h3>Use your phone cameras</h3><p>Scan a private QR code, capture the NID with the rear camera, and then take a live selfie with the front camera.</p></div>
                     <button className="button" onClick={() => createNidMobileSession.mutate()} disabled={identityLocked || !profileComplete || createNidMobileSession.isPending}>
                       {createNidMobileSession.isPending ? <LoaderCircle className="spin" size={17} /> : <QrCode size={17} />} Generate capture QR
                     </button>
@@ -641,10 +653,10 @@ export default function BuyerPortal() {
                     <div>
                       <span className="identity-eyebrow"><QrCode size={15} /> Secure mobile capture</span>
                       <h2>Scan this QR code</h2>
-                      <p>Open your phone camera, scan the code, and capture the front of the NID. This link is one-time and expires {nidVerification.data?.expiresAt ? `at ${dayjs(nidVerification.data.expiresAt).format("h:mm A")}` : "in 10 minutes"}.</p>
+                      <p>Scan the code, capture the NID front, and take a live selfie. This one-time link expires {nidVerification.data?.expiresAt ? `at ${dayjs(nidVerification.data.expiresAt).format("h:mm A")}` : "in 10 minutes"}.</p>
                       <div className={`nid-phone-status ${nidVerification.data?.captures?.front ? "complete" : ""}`}>
-                        {nidVerification.data?.captures?.front ? <CheckCircle2 size={18} /> : <LoaderCircle className="spin" size={18} />}
-                        {nidVerification.data?.captures?.front ? "NID captured. Processing verification..." : "Waiting for phone capture..."}
+                        {nidVerification.data?.captures?.front && nidVerification.data?.captures?.liveness ? <CheckCircle2 size={18} /> : <LoaderCircle className="spin" size={18} />}
+                        {nidVerification.data?.captures?.front && nidVerification.data?.captures?.liveness ? "NID and selfie captured. Processing verification..." : "Waiting for NID and selfie capture..."}
                       </div>
                       <button className="button secondary" onClick={() => createNidMobileSession.mutate()} disabled={createNidMobileSession.isPending}>
                         <QrCode size={16} /> Generate a new QR
@@ -674,7 +686,9 @@ export default function BuyerPortal() {
                         ["NID front readable", nidVerification.data.result.checks?.frontOcr],
                         ["Profile NID number", nidVerification.data.result.checks?.profileNidNumberMatch],
                         ["Profile full name", nidVerification.data.result.checks?.profileNameMatch],
-                        ["Profile date of birth", nidVerification.data.result.checks?.profileDateOfBirthMatch]
+                        ["Profile date of birth", nidVerification.data.result.checks?.profileDateOfBirthMatch],
+                        ["Live face detected", nidVerification.data.result.checks?.faceDetected],
+                        ["Selfie matches NID portrait", nidVerification.data.result.checks?.faceMatch]
                       ].map(([label, check]) => (
                         <div className={`identity-check identity-${String(check?.status || "inconclusive").toLowerCase()}`} key={label}>
                           <ShieldCheck size={16} /><span><strong>{label}</strong><small>{check?.detail || "Profile and NID front comparison"}</small></span><b>{check?.status || "INCONCLUSIVE"}</b>

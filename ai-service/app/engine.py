@@ -405,10 +405,12 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
     with tempfile.TemporaryDirectory(prefix="financelend-identity-") as directory:
         root = Path(directory)
         front_path, back_path = root / "front", root / "back"
-        live_path = root / ("live.jpg" if capture_mode == "selfie" else "live.webm")
+        document_mode = capture_mode in ("document_only", "document_selfie")
+        selfie_mode = capture_mode in ("selfie", "document_selfie")
+        live_path = root / ("live.jpg" if selfie_mode else "live.webm")
         async with httpx.AsyncClient() as client:
             await download_asset(client, front_url, front_path)
-            if capture_mode != "document_only":
+            if not document_mode:
                 if not back_url:
                     raise ValueError("The NID back is required for full identity verification")
                 await download_asset(client, back_url, back_path)
@@ -417,26 +419,26 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
                     raise ValueError("Live face evidence is required for full identity verification")
                 await download_asset(client, liveness_url, live_path)
         front_image = cv2.imread(str(front_path))
-        back_image = cv2.imread(str(back_path)) if capture_mode != "document_only" else None
-        if front_image is None or (capture_mode != "document_only" and back_image is None):
+        back_image = cv2.imread(str(back_path)) if not document_mode else None
+        if front_image is None or (not document_mode and back_image is None):
             raise ValueError("A required document image could not be decoded")
-        ocr = extract_ocr(front_image, fast=capture_mode == "document_only")
-        qr = {"status": "NOT_REQUIRED", "rawData": "", "fields": {}} if capture_mode == "document_only" else decode_qr(back_image)
+        ocr = extract_ocr(front_image, fast=document_mode)
+        qr = {"status": "NOT_REQUIRED", "rawData": "", "fields": {}} if document_mode else decode_qr(back_image)
         if capture_mode == "document_only":
             face = {"detected": False, "qualityAcceptable": False, "similarity": 0.0, "warnings": []}
             liveness = {"status": "NOT_AVAILABLE", "warnings": []}
         else:
             face_engine = FaceEngine()
-            live_image = cv2.imread(str(live_path)) if capture_mode == "selfie" else sharpest_video_frame(live_path, face_engine)
+            live_image = cv2.imread(str(live_path)) if selfie_mode else sharpest_video_frame(live_path, face_engine)
             face = {"detected": False, "qualityAcceptable": False, "similarity": 0.0, "warnings": ["A live face frame could not be decoded."]}
             if live_image is not None:
                 face = face_engine.compare(front_image, live_image)
-            liveness = {"status": "NOT_AVAILABLE", "warnings": ["Selfie fallback does not include liveness."]} if capture_mode == "selfie" else analyze_liveness(live_path, challenge)
+            liveness = {"status": "NOT_AVAILABLE", "warnings": ["A still selfie does not include liveness."]} if selfie_mode else analyze_liveness(live_path, challenge)
         return {
             "ocr": ocr,
             "qr": qr,
             "comparisons": {"nameSimilarity": name_similarity(ocr["fields"].get("name"), qr["fields"].get("name"))},
             "face": face,
             "liveness": liveness,
-            "modelVersions": {"ocr": "tesseract-eng-profile-v2" if capture_mode == "document_only" else "tesseract-ben-eng-v2", "qr": "zxing-cpp-2.3", "faceDetector": "yunet-2023mar", "faceRecognizer": "sface-2021dec", "liveness": "mediapipe-face-landmarker-v1"},
+            "modelVersions": {"ocr": "tesseract-eng-profile-v2" if document_mode else "tesseract-ben-eng-v2", "qr": "zxing-cpp-2.3", "faceDetector": "yunet-2023mar", "faceRecognizer": "sface-2021dec", "liveness": "mediapipe-face-landmarker-v1"},
         }

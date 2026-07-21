@@ -18,7 +18,7 @@ class AnalysisRequest(BaseModel):
     frontUrl: HttpUrl
     backUrl: HttpUrl | None = None
     livenessUrl: HttpUrl | None = None
-    captureMode: str = Field(pattern="^(video|selfie|document_only)$")
+    captureMode: str = Field(pattern="^(video|selfie|document_only|document_selfie)$")
     challenge: list[str] = Field(default_factory=list, max_length=4)
 
 
