@@ -76,10 +76,15 @@ NID_BACK_PATTERN = r"(?:BLOOD\s*GROUP|BIRTH\s*PLACE|PLACE\s*OF\s*BIRTH|PRINT(?:E
 
 def extract_ocr_date(raw_text: str) -> str:
     translated = raw_text.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
-    labelled = re.search(rf"{DATE_LABEL_PATTERN}\s*[:\-]?\s*({DATE_VALUE_PATTERN})", translated, re.I)
-    candidate = labelled.group(1) if labelled else ""
-    normalized = normalize_date(candidate)
-    return normalized if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized) else ""
+    labelled = re.search(rf"{DATE_LABEL_PATTERN}\s*[:;,\-]?\s*({DATE_VALUE_PATTERN})", translated, re.I)
+    candidates = [labelled.group(1)] if labelled else (
+        [] if re.search(NID_BACK_PATTERN, translated, re.I) else re.findall(DATE_VALUE_PATTERN, translated, re.I)
+    )
+    for candidate in candidates:
+        normalized = normalize_date(candidate)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
+            return normalized
+    return ""
 
 
 def looks_like_nid_back(raw_text: str) -> bool:
@@ -132,18 +137,50 @@ def text_from_ocr_data(data: dict) -> str:
     return "\n".join(" ".join(words) for words in lines.values())
 
 
+def name_candidate_quality(value: str) -> tuple[int, int, int]:
+    normalized = normalize_text(value)
+    tokens = normalized.split()
+    latin_characters = len(re.findall(r"[A-Z]", normalized))
+    single_character_tokens = sum(len(token) == 1 for token in tokens)
+    return (1 if latin_characters else 0, -single_character_tokens, latin_characters)
+
+
+def merge_ocr_fields(attempts: list[dict]) -> dict:
+    candidates: dict[str, list[tuple[str, float]]] = {"name": [], "nidNumber": [], "dateOfBirth": []}
+    for attempt in attempts:
+        for key, value in attempt["fields"].items():
+            if key in candidates and value:
+                candidates[key].append((value, attempt["confidence"]))
+
+    merged = {}
+    for key in ("nidNumber", "dateOfBirth"):
+        if candidates[key]:
+            grouped = {}
+            for value, confidence in candidates[key]:
+                count, total_confidence = grouped.get(value, (0, 0.0))
+                grouped[value] = (count + 1, total_confidence + confidence)
+            merged[key] = max(grouped, key=lambda value: grouped[value])
+    if candidates["name"]:
+        merged["name"] = max(
+            candidates["name"],
+            key=lambda candidate: (*name_candidate_quality(candidate[0]), candidate[1]),
+        )[0]
+    return normalize_fields(merged)
+
+
 def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
     quality_ok, warnings = image_quality(image)
-    best = {"text": "", "confidence": 0.0}
+    attempts = []
     variants = ocr_variants(image)
-    for variant in ([variants[1]] if fast else variants):
+    for variant in variants:
         data = pytesseract.image_to_data(Image.fromarray(variant), lang=os.getenv("TESSERACT_LANG", "ben+eng"), config="--psm 6", output_type=Output.DICT)
         confidences = [float(value) for value in data["conf"] if str(value) != "-1" and float(value) >= 0]
         confidence = sum(confidences) / len(confidences) / 100 if confidences else 0.0
         text = text_from_ocr_data(data).strip()
-        if confidence > best["confidence"]:
-            best = {"text": text, "confidence": confidence}
-    fields = parse_ocr_fields(best["text"])
+        attempts.append({"text": text, "confidence": confidence, "fields": parse_ocr_fields(text)})
+
+    fields = merge_ocr_fields(attempts)
+    best = max(attempts, key=lambda attempt: (len(attempt["fields"]), attempt["confidence"]), default={"text": "", "confidence": 0.0})
     if looks_like_nid_back(best["text"]):
         fields = {}
         warnings.append("The uploaded image appears to be the back side of the NID. Upload the front side showing the name, NID number, and date of birth.")
@@ -345,5 +382,5 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
             "comparisons": {"nameSimilarity": name_similarity(ocr["fields"].get("name"), qr["fields"].get("name"))},
             "face": face,
             "liveness": liveness,
-            "modelVersions": {"ocr": "tesseract-ben-eng", "qr": "zxing-cpp-2.3", "faceDetector": "yunet-2023mar", "faceRecognizer": "sface-2021dec", "liveness": "mediapipe-face-landmarker-v1"},
+            "modelVersions": {"ocr": "tesseract-ben-eng-v2", "qr": "zxing-cpp-2.3", "faceDetector": "yunet-2023mar", "faceRecognizer": "sface-2021dec", "liveness": "mediapipe-face-landmarker-v1"},
         }

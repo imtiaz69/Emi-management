@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.engine import decode_qr, looks_like_nid_back, parse_ocr_fields, text_from_ocr_data
+from app.engine import decode_qr, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, text_from_ocr_data
 
 
 def test_front_ocr_accepts_month_name_date():
@@ -12,6 +12,24 @@ def test_front_ocr_accepts_month_name_date():
 def test_front_ocr_accepts_full_month_and_bengali_digits():
     fields = parse_ocr_fields("Name: Test Buyer\nNID: ১২৩৪৫৬৭৮৯০\nDate of Birth: ৩১ December ২০০২")
     assert fields == {"name": "TEST BUYER", "nidNumber": "1234567890", "dateOfBirth": "2002-12-31"}
+
+
+def test_front_ocr_accepts_nid_date_with_semicolon_label():
+    fields = parse_ocr_fields("Name: Tafi Sheikh\nID NO: 63849492839\nDate of Birth; 07 Jan 2002")
+    assert fields == {"name": "TAFI SHEIKH", "nidNumber": "63849492839", "dateOfBirth": "2002-01-07"}
+
+
+def test_ocr_attempts_keep_the_strongest_name_and_consistent_identity_fields():
+    attempts = [
+        {"confidence": 0.87, "fields": {"name": "TAF SHEIKH", "nidNumber": "63849492839", "dateOfBirth": "2002-01-07"}},
+        {"confidence": 0.75, "fields": {"name": "F AR K", "nidNumber": "63849492839"}},
+        {"confidence": 0.71, "fields": {"name": "TAFI SHEIKH", "nidNumber": "63849492839"}},
+    ]
+    assert merge_ocr_fields(attempts) == {
+        "name": "TAFI SHEIKH",
+        "nidNumber": "63849492839",
+        "dateOfBirth": "2002-01-07",
+    }
 
 
 def test_back_side_print_date_is_never_treated_as_date_of_birth():

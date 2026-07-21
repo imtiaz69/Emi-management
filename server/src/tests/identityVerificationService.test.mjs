@@ -71,6 +71,40 @@ describe("identity verification policy", () => {
     expect(result.automatedDecision).toBe("approved");
   });
 
+  it.each(["TAFI SHEIKH", "tafi sheikh", "Tafi Sheikh", "tAfI sHeIkH"])(
+    "matches profile names regardless of letter case: %s",
+    (profileName) => {
+      const changed = observation({
+        ocr: {
+          status: "COMPLETED",
+          fields: { name: "TAFI SHEIKH", nidNumber: "63849492839", dateOfBirth: "07 Jan 2002" },
+          confidence: 0.92,
+          warnings: []
+        },
+        profileFields: { name: profileName, nidNumber: "63849492839", dateOfBirth: "2002-01-07" }
+      });
+      const result = buildDecision(changed, "document_only");
+      expect(result.overallStatus).toBe("VERIFIED");
+      expect(result.checks.profileNameMatch.status).toBe("PASS");
+      expect(result.checks.profileDateOfBirthMatch.status).toBe("PASS");
+    }
+  );
+
+  it("tolerates a small OCR name omission while preserving identity checks", () => {
+    const changed = observation({
+      ocr: {
+        status: "COMPLETED",
+        fields: { name: "TAF SHEIKH", nidNumber: "63849492839", dateOfBirth: "07 Jan 2002" },
+        confidence: 0.87,
+        warnings: []
+      },
+      profileFields: { name: "Tafi Sheikh", nidNumber: "63849492839", dateOfBirth: "2002-01-07" }
+    });
+    const result = buildDecision(changed, "document_only");
+    expect(result.overallStatus).toBe("VERIFIED");
+    expect(result.scores.profileNameSimilarity).toBeGreaterThanOrEqual(0.9);
+  });
+
   it("rejects a document-only check when a required field mismatches", () => {
     const changed = observation();
     changed.profileFields.dateOfBirth = "2000-01-01";

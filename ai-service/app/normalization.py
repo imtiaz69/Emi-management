@@ -33,7 +33,23 @@ def normalize_nid(value: str | None) -> str:
 def normalize_date(value: str | None) -> str:
     if not value:
         return ""
-    text = str(value).translate(BENGALI_DIGITS).strip()
+    text = unicodedata.normalize("NFKC", str(value)).translate(BENGALI_DIGITS).strip()
+
+    def iso_date(year: int, month: int, day: int) -> str:
+        try:
+            return datetime(year, month, day).date().isoformat()
+        except ValueError:
+            return ""
+
+    iso_match = re.fullmatch(r"(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})", text)
+    if iso_match:
+        return iso_date(*(int(part) for part in iso_match.groups()))
+
+    day_first_match = re.fullmatch(r"(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4})", text)
+    if day_first_match:
+        day, month, year = (int(part) for part in day_first_match.groups())
+        return iso_date(year, month, day)
+
     for day_first in (True, False):
         try:
             parsed = date_parser.parse(text, dayfirst=day_first, fuzzy=False)

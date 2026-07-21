@@ -43,12 +43,63 @@ function normalizeNid(value) {
 
 function normalizeDate(value) {
   if (!value) return "";
-  const text = normalizeText(value).replace(/\s/g, "-");
-  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
-  const dayFirst = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (dayFirst) return `${dayFirst[3]}-${dayFirst[2].padStart(2, "0")}-${dayFirst[1].padStart(2, "0")}`;
-  return text;
+  const bengaliDigits = "০১২৩৪৫৬৭৮৯";
+  const text = String(value)
+    .normalize("NFKC")
+    .replace(/[০-৯]/g, (digit) => String(bengaliDigits.indexOf(digit)))
+    .trim()
+    .toUpperCase();
+  const months = {
+    JAN: 1, JANUARY: 1, FEB: 2, FEBRUARY: 2, MAR: 3, MARCH: 3,
+    APR: 4, APRIL: 4, MAY: 5, JUN: 6, JUNE: 6, JUL: 7, JULY: 7,
+    AUG: 8, AUGUST: 8, SEP: 9, SEPT: 9, SEPTEMBER: 9, OCT: 10,
+    OCTOBER: 10, NOV: 11, NOVEMBER: 11, DEC: 12, DECEMBER: 12
+  };
+  const format = (year, month, day) => {
+    const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() + 1 !== Number(month) || date.getUTCDate() !== Number(day)) return "";
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  };
+  let match = text.match(/^(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})$/);
+  if (match) return format(match[1], match[2], match[3]);
+  match = text.match(/^(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4})$/);
+  if (match) return format(match[3], match[2], match[1]);
+  match = text.match(/^(\d{1,2})[\s./-]+([A-Z]+)[\s,./-]+(\d{4})$/);
+  if (match && months[match[2]]) return format(match[3], months[match[2]], match[1]);
+  match = text.match(/^([A-Z]+)[\s./-]+(\d{1,2})[\s,./-]+(\d{4})$/);
+  if (match && months[match[1]]) return format(match[3], months[match[1]], match[2]);
+  return "";
+}
+
+function editSimilarity(left, right) {
+  if (left === right) return 1;
+  if (!left || !right) return 0;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    let diagonal = previous[0];
+    previous[0] = leftIndex;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const above = previous[rightIndex];
+      previous[rightIndex] = left[leftIndex - 1] === right[rightIndex - 1]
+        ? diagonal
+        : Math.min(diagonal, above, previous[rightIndex - 1]) + 1;
+      diagonal = above;
+    }
+  }
+  return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+
+function calculateNameSimilarity(left, right) {
+  const normalizedLeft = normalizeText(left);
+  const normalizedRight = normalizeText(right);
+  if (!normalizedLeft || !normalizedRight) return 0;
+  const sortedLeft = normalizedLeft.split(" ").sort().join(" ");
+  const sortedRight = normalizedRight.split(" ").sort().join(" ");
+  return Math.max(
+    editSimilarity(normalizedLeft, normalizedRight),
+    editSimilarity(sortedLeft, sortedRight),
+    editSimilarity(normalizedLeft.replace(/\s/g, ""), normalizedRight.replace(/\s/g, ""))
+  );
 }
 
 function maskNid(value = "") {
@@ -95,10 +146,15 @@ function buildDecision(observation = {}, captureMode = "video") {
   const profileNid = normalizeNid(profile.nidNumber);
   const profileDob = normalizeDate(profile.dateOfBirth);
   const profileName = normalizeText(profile.name);
+  const profileNameSimilarity = calculateNameSimilarity(profileName, front.name);
   const profileNidStatus = !documentOnly ? "NOT_AVAILABLE" : profileNid && frontNid ? (profileNid === frontNid ? "PASS" : "FAIL") : "INCONCLUSIVE";
   const profileDobStatus = !documentOnly ? "NOT_AVAILABLE" : profileDob && frontDob ? (profileDob === frontDob ? "PASS" : "FAIL") : "INCONCLUSIVE";
   const profileNameStatus = !documentOnly ? "NOT_AVAILABLE" : profileName && front.name
-    ? (profileName === normalizeText(front.name) ? "PASS" : "FAIL")
+    ? profileNameSimilarity >= limits.nameMatch
+      ? "PASS"
+      : profileNameSimilarity >= limits.nameBorderline
+        ? "INCONCLUSIVE"
+        : "FAIL"
     : "INCONCLUSIVE";
   const faceStatus = documentOnly
     ? "NOT_AVAILABLE"
@@ -119,7 +175,7 @@ function buildDecision(observation = {}, captureMode = "video") {
     nameMatch: statusCheck(documentOnly ? "NOT_AVAILABLE" : nameStatus, qrNotRequiredDetail),
     dateOfBirthMatch: statusCheck(documentOnly ? "NOT_AVAILABLE" : dobStatus, qrNotRequiredDetail),
     profileNidNumberMatch: statusCheck(profileNidStatus),
-    profileNameMatch: statusCheck(profileNameStatus),
+    profileNameMatch: statusCheck(profileNameStatus, documentOnly && profile.name && front.name ? `${Math.round(profileNameSimilarity * 100)}% normalized similarity` : undefined),
     profileDateOfBirthMatch: statusCheck(profileDobStatus),
     faceDetected: statusCheck(documentOnly ? "NOT_AVAILABLE" : observation.face?.detected ? "PASS" : "FAIL"),
     faceQuality: statusCheck(documentOnly ? "NOT_AVAILABLE" : observation.face?.qualityAcceptable ? "PASS" : "INCONCLUSIVE"),
@@ -175,6 +231,7 @@ function buildDecision(observation = {}, captureMode = "video") {
     scores: {
       ocrConfidence: Number(observation.ocr?.confidence || 0),
       nameSimilarity,
+      profileNameSimilarity,
       faceSimilarity
     },
     failureReasons,

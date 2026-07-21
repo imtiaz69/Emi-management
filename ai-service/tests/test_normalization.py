@@ -17,8 +17,18 @@ def test_date_normalization():
 
 
 def test_supported_date_formats_normalize_to_iso():
-    for value in ("31 Dec 2002", "31 December 2002", "31/12/2002", "31-12-2002", "2002-12-31", "৩১/১২/২০০২"):
-        assert normalize_date(value) == "2002-12-31"
+    cases = {
+        "31 Dec 2002": "2002-12-31",
+        "31 December 2002": "2002-12-31",
+        "31/12/2002": "2002-12-31",
+        "31-12-2002": "2002-12-31",
+        "2002-12-31": "2002-12-31",
+        "৩১/১২/২০০২": "2002-12-31",
+        "07 Jan 2002": "2002-01-07",
+        "2002-01-07": "2002-01-07",
+    }
+    for value, expected in cases.items():
+        assert normalize_date(value) == expected
 
 
 def test_structured_qr_json():
