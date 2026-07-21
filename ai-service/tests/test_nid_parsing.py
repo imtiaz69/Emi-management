@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from app.engine import bounded_image, decode_qr, load_image, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, targeted_nid_from_ocr_data, text_from_ocr_data
+from app.engine import bounded_image, decode_qr, load_image, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, targeted_date_from_ocr_data, targeted_nid_from_ocr_data, text_from_ocr_data
 
 
 def test_phone_photo_loader_applies_exif_orientation(tmp_path):
@@ -35,6 +35,11 @@ def test_front_ocr_accepts_full_month_and_bengali_digits():
 def test_front_ocr_accepts_nid_date_with_semicolon_label():
     fields = parse_ocr_fields("Name: Tafi Sheikh\nID NO: 63849492839\nDate of Birth; 07 Jan 2002")
     assert fields == {"name": "TAFI SHEIKH", "nidNumber": "63849492839", "dateOfBirth": "2002-01-07"}
+
+
+def test_front_ocr_tolerates_captured_photo_birth_and_month_mistakes():
+    fields = parse_ocr_fields("Name: Imtiaz Ahmed\nID NO: 6463188984\nDate of Binh 31 Deo 2002")
+    assert fields == {"name": "IMTIAZ AHMED", "nidNumber": "6463188984", "dateOfBirth": "2002-12-31"}
 
 
 def test_ocr_attempts_keep_the_strongest_name_and_consistent_identity_fields():
@@ -92,6 +97,17 @@ def test_targeted_nid_uses_the_number_line_coordinates(monkeypatch):
     }
     monkeypatch.setattr("app.engine.pytesseract.image_to_string", lambda *args, **kwargs: "331 408 9875")
     assert targeted_nid_from_ocr_data(np.full((120, 320), 255, dtype=np.uint8), data) == "3314089875"
+
+
+def test_targeted_date_recovers_a_bad_initial_phone_ocr_line(monkeypatch):
+    data = {
+        "text": ["Date", "of", "Binh", "31", "Deo", "2600"],
+        "block_num": [1] * 6, "par_num": [1] * 6, "line_num": [1] * 6,
+        "left": [5, 50, 75, 125, 155, 205], "top": [20] * 6,
+        "width": [40, 20, 45, 25, 40, 55], "height": [22] * 6,
+    }
+    monkeypatch.setattr("app.engine.pytesseract.image_to_string", lambda *args, **kwargs: "Date of Birth 31 Dec 2002")
+    assert targeted_date_from_ocr_data(np.full((90, 300), 255, dtype=np.uint8), data) == "2002-12-31"
 
 
 def make_qr(payload: str) -> np.ndarray:

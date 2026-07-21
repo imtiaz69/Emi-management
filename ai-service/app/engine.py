@@ -85,8 +85,8 @@ def ocr_variants(image: np.ndarray) -> list[np.ndarray]:
     return [resized, normalized, threshold]
 
 
-DATE_LABEL_PATTERN = r"(?:D[A4]TE\s*(?:OF\s*)?B[I1L]R[T7]H|D[O0]B|জন্ম\s*তারিখ)"
-MONTH_PATTERN = r"(?:JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)"
+DATE_LABEL_PATTERN = r"(?:D[A4]TE\s*(?:OF\s*)?B[I1L][RNH][T7N]?H?|D[O0]B|জন্ম\s*তারিখ)"
+MONTH_PATTERN = r"(?:JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DE[CO0](?:EMBER)?)"
 DATE_SEPARATOR = r"(?:\s+|\s*[-/.]\s*)"
 DATE_VALUE_PATTERN = rf"(?:\d{{1,2}}{DATE_SEPARATOR}{MONTH_PATTERN}{DATE_SEPARATOR}\d{{4}}|{MONTH_PATTERN}{DATE_SEPARATOR}\d{{1,2}},?{DATE_SEPARATOR}\d{{4}}|\d{{4}}[./-]\d{{1,2}}[./-]\d{{1,2}}|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{4}})"
 NID_BACK_PATTERN = r"(?:BLOOD\s*GROUP|BIRTH\s*PLACE|PLACE\s*OF\s*BIRTH|PRINT(?:ED|ING)?|রক্তের\s*গ্রুপ|জন্মস্থান|মুদ্রণ)"
@@ -94,6 +94,9 @@ NID_BACK_PATTERN = r"(?:BLOOD\s*GROUP|BIRTH\s*PLACE|PLACE\s*OF\s*BIRTH|PRINT(?:E
 
 def extract_ocr_date(raw_text: str) -> str:
     translated = raw_text.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
+    translated = re.sub(r"\b(?:DEO|DE0|0EC|D3C)\b", "DEC", translated, flags=re.I)
+    translated = re.sub(r"(?<=\d)[OQ](?=\d)", "0", translated, flags=re.I)
+    translated = re.sub(r"(?<=\d)[IL](?=\d)", "1", translated, flags=re.I)
     labelled = re.search(rf"{DATE_LABEL_PATTERN}\s*[:;,\-]?\s*({DATE_VALUE_PATTERN})", translated, re.I)
     candidates = [labelled.group(1)] if labelled else (
         [] if re.search(NID_BACK_PATTERN, translated, re.I) else re.findall(DATE_VALUE_PATTERN, translated, re.I)
@@ -204,6 +207,43 @@ def targeted_nid_from_ocr_data(image: np.ndarray, data: dict) -> str:
     return digits if 10 <= len(digits) <= 17 else ""
 
 
+def targeted_date_from_ocr_data(image: np.ndarray, data: dict) -> str:
+    lines: dict[tuple[int, int, int], list[dict]] = {}
+    for index, value in enumerate(data.get("text", [])):
+        word = str(value).strip()
+        if not word:
+            continue
+        key = (int(data["block_num"][index]), int(data["par_num"][index]), int(data["line_num"][index]))
+        lines.setdefault(key, []).append({
+            "text": word,
+            "left": int(data["left"][index]), "top": int(data["top"][index]),
+            "width": int(data["width"][index]), "height": int(data["height"][index]),
+        })
+    for words in lines.values():
+        line_text = " ".join(word["text"] for word in words)
+        normalized_label = normalize_text(line_text)
+        if "DATE" not in normalized_label and "DOB" not in normalized_label and "জন্ম" not in line_text:
+            continue
+        left, top = min(word["left"] for word in words), min(word["top"] for word in words)
+        right = max(word["left"] + word["width"] for word in words)
+        bottom = max(word["top"] + word["height"] for word in words)
+        line_height = max(1, bottom - top)
+        crop = image[max(0, top - line_height):min(image.shape[0], bottom + line_height), max(0, left - 10):min(image.shape[1], right + 20)]
+        if crop.size == 0:
+            continue
+        scaled = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        if len(scaled.shape) == 3:
+            scaled = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
+        enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(scaled)
+        threshold = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        for variant in (enhanced, threshold):
+            text = pytesseract.image_to_string(Image.fromarray(variant), lang="eng", config="--psm 7")
+            date = extract_ocr_date(text)
+            if date:
+                return date
+    return ""
+
+
 def name_candidate_quality(value: str) -> tuple[int, int, int]:
     normalized = normalize_text(value)
     tokens = normalized.split()
@@ -251,6 +291,9 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
             targeted_nid = targeted_nid_from_ocr_data(variant, data)
             if targeted_nid:
                 fields["nidNumber"] = targeted_nid
+            targeted_date = targeted_date_from_ocr_data(variant, data)
+            if targeted_date:
+                fields["dateOfBirth"] = targeted_date
         attempts.append({"text": text, "confidence": confidence, "fields": fields})
         if fast and all(fields.get(key) for key in ("name", "nidNumber", "dateOfBirth")):
             break

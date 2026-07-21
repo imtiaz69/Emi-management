@@ -47,6 +47,7 @@ const envSchema = z.object({
   IDENTITY_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(180000),
   IDENTITY_NAME_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.9),
   IDENTITY_NAME_BORDERLINE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.78),
+  IDENTITY_CORROBORATED_NAME_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
   IDENTITY_FACE_MATCH_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.363),
   IDENTITY_NID_FACE_MATCH_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.6),
   IDENTITY_FACE_BORDERLINE_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.3),

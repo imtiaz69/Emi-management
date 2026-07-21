@@ -662,7 +662,7 @@ export default function BuyerPortal() {
 
                 {nidCaptureMode === "phone" && !nidMobileLink && (
                   <section className="nid-phone-start">
-                    <div><QrCode size={30} /><h3>Use your phone cameras</h3><p>Scan a private QR code, capture the NID with the rear camera, and then take a live selfie with the front camera.</p></div>
+                    <div><QrCode size={30} /><h3>Use your phone camera</h3><p>Scan a private QR code and capture the NID front with the rear camera. A selfie can be added as an optional face check.</p></div>
                     <button className="button" onClick={() => createNidMobileSession.mutate()} disabled={identityLocked || !profileComplete || createNidMobileSession.isPending}>
                       {createNidMobileSession.isPending ? <LoaderCircle className="spin" size={17} /> : <QrCode size={17} />} Generate capture QR
                     </button>
@@ -675,10 +675,10 @@ export default function BuyerPortal() {
                     <div>
                       <span className="identity-eyebrow"><QrCode size={15} /> Secure mobile capture</span>
                       <h2>Scan this QR code</h2>
-                      <p>Scan the code, capture the NID front, and take a live selfie. This one-time link expires {nidVerification.data?.expiresAt ? `at ${dayjs(nidVerification.data.expiresAt).format("h:mm A")}` : "in 10 minutes"}.</p>
+                      <p>Scan the code and capture the NID front. The selfie step is optional. This one-time link expires {nidVerification.data?.expiresAt ? `at ${dayjs(nidVerification.data.expiresAt).format("h:mm A")}` : "in 10 minutes"}.</p>
                       <div className={`nid-phone-status ${nidVerification.data?.captures?.front ? "complete" : ""}`}>
-                        {nidVerification.data?.captures?.front && nidVerification.data?.captures?.liveness ? <CheckCircle2 size={18} /> : <LoaderCircle className="spin" size={18} />}
-                        {nidVerification.data?.captures?.front && nidVerification.data?.captures?.liveness ? "NID and selfie captured. Processing verification..." : "Waiting for NID and selfie capture..."}
+                        {nidVerification.data?.captures?.front ? <CheckCircle2 size={18} /> : <LoaderCircle className="spin" size={18} />}
+                        {nidVerification.data?.captures?.front ? "NID captured. Complete the verification on your phone." : "Waiting for the NID front capture..."}
                       </div>
                       <button className="button secondary" onClick={() => createNidMobileSession.mutate()} disabled={createNidMobileSession.isPending}>
                         <QrCode size={16} /> Generate a new QR

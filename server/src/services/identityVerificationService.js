@@ -21,6 +21,7 @@ function thresholds() {
   return {
     nameMatch: numberEnv("IDENTITY_NAME_MATCH_THRESHOLD", 0.9),
     nameBorderline: numberEnv("IDENTITY_NAME_BORDERLINE_THRESHOLD", 0.78),
+    corroboratedNameMatch: numberEnv("IDENTITY_CORROBORATED_NAME_MATCH_THRESHOLD", 0.6),
     faceMatch: numberEnv("IDENTITY_FACE_MATCH_THRESHOLD", 0.363),
     faceBorderline: numberEnv("IDENTITY_FACE_BORDERLINE_THRESHOLD", 0.3)
   };
@@ -90,8 +91,8 @@ function editSimilarity(left, right) {
 }
 
 function calculateNameSimilarity(left, right) {
-  const normalizedLeft = normalizeText(left);
-  const normalizedRight = normalizeText(right);
+  const normalizedLeft = normalizeText(left).toLocaleLowerCase("en");
+  const normalizedRight = normalizeText(right).toLocaleLowerCase("en");
   if (!normalizedLeft || !normalizedRight) return 0;
   const sortedLeft = normalizedLeft.split(" ").sort().join(" ");
   const sortedRight = normalizedRight.split(" ").sort().join(" ");
@@ -167,8 +168,10 @@ function buildDecision(observation = {}, captureMode = "video") {
   );
   const profileNidStatus = !documentOnly ? "NOT_AVAILABLE" : profileNid && frontNid ? (profileNid === frontNid ? "PASS" : "FAIL") : "INCONCLUSIVE";
   const profileDobStatus = !documentOnly ? "NOT_AVAILABLE" : profileDob && frontDob ? (profileDob === frontDob ? "PASS" : "FAIL") : "INCONCLUSIVE";
+  const corroboratedIdentity = profileNidStatus === "PASS" && profileDobStatus === "PASS";
+  const requiredProfileNameSimilarity = corroboratedIdentity ? Math.min(limits.nameMatch, limits.corroboratedNameMatch) : limits.nameMatch;
   const profileNameStatus = !documentOnly ? "NOT_AVAILABLE" : profileName && (front.name || observation.ocr?.rawText)
-    ? profileNameSimilarity >= limits.nameMatch
+    ? profileNameSimilarity >= requiredProfileNameSimilarity
       ? "PASS"
       : profileNameSimilarity >= limits.nameBorderline
         ? "INCONCLUSIVE"
@@ -193,7 +196,9 @@ function buildDecision(observation = {}, captureMode = "video") {
     nameMatch: statusCheck(documentOnly ? "NOT_AVAILABLE" : nameStatus, qrNotRequiredDetail),
     dateOfBirthMatch: statusCheck(documentOnly ? "NOT_AVAILABLE" : dobStatus, qrNotRequiredDetail),
     profileNidNumberMatch: statusCheck(profileNidStatus),
-    profileNameMatch: statusCheck(profileNameStatus, documentOnly && profile.name && front.name ? `${Math.round(profileNameSimilarity * 100)}% normalized similarity` : undefined),
+    profileNameMatch: statusCheck(profileNameStatus, documentOnly && profile.name && front.name
+      ? `${Math.round(profileNameSimilarity * 100)}% lowercase OCR similarity${corroboratedIdentity && profileNameSimilarity < limits.nameMatch ? "; accepted with exact NID number and date of birth" : ""}`
+      : undefined),
     profileDateOfBirthMatch: statusCheck(profileDobStatus),
     faceDetected: statusCheck(documentOnly && !documentSelfie ? "NOT_AVAILABLE" : observation.face?.detected ? "PASS" : "FAIL"),
     faceQuality: statusCheck(documentOnly && !documentSelfie ? "NOT_AVAILABLE" : observation.face?.qualityAcceptable ? "PASS" : "INCONCLUSIVE"),
@@ -202,7 +207,7 @@ function buildDecision(observation = {}, captureMode = "video") {
   };
 
   const explicitFailure = (documentOnly
-    ? [profileNidStatus, profileDobStatus, profileNameStatus, ...(documentSelfie ? [faceStatus] : [])]
+    ? [profileNidStatus, profileDobStatus, profileNameStatus]
     : [nidStatus, dobStatus, nameStatus, faceStatus, livenessStatus]).includes("FAIL");
   const profilePass = !documentOnly || [profileNidStatus, profileDobStatus, profileNameStatus].every((status) => status === "PASS");
   const profileDocumentPass = observation.ocr?.status === "COMPLETED" && profilePass;
@@ -211,7 +216,7 @@ function buildDecision(observation = {}, captureMode = "video") {
   const partialPass = frontQrDocumentPass && faceStatus === "PASS" && captureMode === "selfie";
   let overallStatus = "MANUAL_REVIEW_REQUIRED";
   if (explicitFailure) overallStatus = "FAILED";
-  else if (documentOnly && profileDocumentPass && (!documentSelfie || faceStatus === "PASS")) overallStatus = "VERIFIED";
+  else if (documentOnly && profileDocumentPass) overallStatus = "VERIFIED";
   else if (fullPass) overallStatus = "VERIFIED";
   else if (partialPass) overallStatus = "PARTIALLY_VERIFIED";
 
@@ -222,8 +227,7 @@ function buildDecision(observation = {}, captureMode = "video") {
   if (profileNidStatus === "FAIL") failureReasons.push("The NID number in the buyer profile does not match the NID card.");
   if (profileDobStatus === "FAIL") failureReasons.push("The date of birth in the buyer profile does not match the NID card.");
   if (profileNameStatus === "FAIL") failureReasons.push("The account name does not match the name on the NID card.");
-  if ((!documentOnly || documentSelfie) && faceStatus === "FAIL") failureReasons.push("The live selfie does not match the NID portrait by the required 60% similarity.");
-  if (documentSelfie && faceStatus === "INCONCLUSIVE") failureReasons.push("The NID portrait or live selfie was not clear enough for a reliable face comparison.");
+  if (!documentOnly && faceStatus === "FAIL") failureReasons.push("The live selfie does not match the NID portrait by the required 60% similarity.");
   if (!documentOnly && livenessStatus === "FAIL") failureReasons.push("The active liveness challenge was not completed.");
 
   const warnings = [...(observation.ocr?.warnings || []), ...(observation.face?.warnings || []), ...(observation.liveness?.warnings || [])]
@@ -231,6 +235,8 @@ function buildDecision(observation = {}, captureMode = "video") {
   if (!documentOnly && qrStatus === "QR_DATA_UNREADABLE") warnings.push("The QR code could not be detected or read from the NID back.");
   if (!documentOnly && qrStatus === "QR_DATA_NOT_PARSEABLE") warnings.push("The QR code was detected, but it did not contain identity fields in a supported readable format.");
   if (captureMode === "selfie") warnings.push("Video liveness was unavailable; a selfie fallback was used.");
+  if (documentSelfie && faceStatus === "FAIL") warnings.push("The optional selfie did not reach the required 60% similarity with the NID portrait.");
+  if (documentSelfie && faceStatus === "INCONCLUSIVE") warnings.push("The optional NID portrait or selfie was not clear enough for a reliable face comparison.");
   if (documentOnly && profileNidStatus === "INCONCLUSIVE") warnings.push("The NID number could not be compared between the buyer profile and NID front.");
   if (documentOnly && profileDobStatus === "INCONCLUSIVE") warnings.push("The date of birth could not be compared between the buyer profile and NID front.");
   if (documentOnly && profileNameStatus === "INCONCLUSIVE") warnings.push("The full name could not be compared between the buyer profile and NID front.");
@@ -343,7 +349,11 @@ function publicSession(session, result, sensitive) {
     completedAt: value.completedAt,
     purgeAt: value.purgeAt,
     purgedAt: value.purgedAt,
-    lastError: value.status === "ERROR" ? value.lastError : undefined,
+    lastError: value.status === "ERROR"
+      ? /fetch failed|failed to fetch|aborted|econn|timeout|temporarily unavailable/i.test(String(value.lastError || ""))
+        ? "The verification service was temporarily unavailable. Please submit the NID verification again. Your selfie is optional."
+        : value.lastError
+      : undefined,
     result: publicResult,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt

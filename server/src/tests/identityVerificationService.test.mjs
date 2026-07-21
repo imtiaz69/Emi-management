@@ -82,15 +82,47 @@ describe("identity verification policy", () => {
     expect(result.scores.faceSimilarity).toBe(0.6);
   });
 
-  it("rejects a buyer NID selfie below 60 percent similarity", () => {
+  it("reports an optional selfie below 60 percent without blocking valid NID approval", () => {
     const result = buildDecision(observation({
       qr: { status: "NOT_REQUIRED", rawData: "", fields: {} },
       face: { detected: true, qualityAcceptable: true, similarity: 0.59, warnings: [] },
       liveness: { status: "NOT_AVAILABLE", warnings: [] }
     }), "document_selfie");
-    expect(result.overallStatus).toBe("FAILED");
+    expect(result.overallStatus).toBe("VERIFIED");
     expect(result.checks.faceMatch.status).toBe("FAIL");
-    expect(result.failureReasons.join(" ")).toContain("60% similarity");
+    expect(result.warnings.join(" ")).toContain("60% similarity");
+  });
+
+  it("accepts a 67 percent lowercase OCR name when exact NID and DOB corroborate it", () => {
+    const result = buildDecision(observation({
+      ocr: {
+        status: "COMPLETED",
+        rawText: "Name: IMTJAZ MER Date of Birth 31 Dec 2002 ID NO 6463188984",
+        fields: { name: "IMTJAZ MER", nidNumber: "6463188984", dateOfBirth: "2002-12-31" },
+        confidence: 0.52,
+        warnings: []
+      },
+      qr: { status: "NOT_REQUIRED", rawData: "", fields: {} },
+      profileFields: { name: "imtiaz ahmed", nidNumber: "6463188984", dateOfBirth: "2002-12-31" },
+      face: { detected: false, qualityAcceptable: false, similarity: 0, warnings: [] },
+      liveness: { status: "NOT_AVAILABLE", warnings: [] }
+    }), "document_only");
+    expect(result.scores.profileNameSimilarity).toBeGreaterThanOrEqual(0.6);
+    expect(result.checks.profileNameMatch.status).toBe("PASS");
+    expect(result.checks.profileNameMatch.detail).toContain("lowercase OCR similarity");
+    expect(result.checks.profileNameMatch.detail).toContain("exact NID number and date of birth");
+    expect(result.overallStatus).toBe("VERIFIED");
+  });
+
+  it("does not use the relaxed OCR name threshold when DOB is missing", () => {
+    const result = buildDecision(observation({
+      ocr: { status: "COMPLETED", rawText: "Name: IMTJAZ MER ID NO 6463188984", fields: { name: "IMTJAZ MER", nidNumber: "6463188984" }, confidence: 0.52, warnings: [] },
+      qr: { status: "NOT_REQUIRED", rawData: "", fields: {} },
+      profileFields: { name: "Imtiaz Ahmed", nidNumber: "6463188984", dateOfBirth: "2002-12-31" }
+    }), "document_only");
+    expect(result.checks.profileDateOfBirthMatch.status).toBe("INCONCLUSIVE");
+    expect(result.checks.profileNameMatch.status).not.toBe("PASS");
+    expect(result.overallStatus).toBe("FAILED");
   });
 
   it.each(["TAFI SHEIKH", "tafi sheikh", "Tafi Sheikh", "tAfI sHeIkH"])(
