@@ -137,6 +137,55 @@ def text_from_ocr_data(data: dict) -> str:
     return "\n".join(" ".join(words) for words in lines.values())
 
 
+def targeted_nid_from_ocr_data(image: np.ndarray, data: dict) -> str:
+    lines: dict[tuple[int, int, int], list[dict]] = {}
+    for index, value in enumerate(data.get("text", [])):
+        word = str(value).strip()
+        if not word:
+            continue
+        key = (
+            int(data.get("block_num", [0])[index]),
+            int(data.get("par_num", [0])[index]),
+            int(data.get("line_num", [0])[index]),
+        )
+        lines.setdefault(key, []).append({
+            "text": word,
+            "left": int(data.get("left", [0])[index]),
+            "top": int(data.get("top", [0])[index]),
+            "width": int(data.get("width", [0])[index]),
+            "height": int(data.get("height", [0])[index]),
+        })
+
+    candidates = []
+    for words in lines.values():
+        digit_words = [word for word in words if re.search(r"\d", word["text"].translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")))]
+        line_digits = "".join(normalize_nid(word["text"]) for word in digit_words)
+        if not 10 <= len(line_digits) <= 17:
+            continue
+        left = min(word["left"] for word in digit_words)
+        top = min(word["top"] for word in digit_words)
+        right = max(word["left"] + word["width"] for word in digit_words)
+        bottom = max(word["top"] + word["height"] for word in digit_words)
+        candidates.append((len(line_digits), left, top, right, bottom))
+
+    if not candidates:
+        return ""
+    _, left, top, right, bottom = max(candidates)
+    line_height = max(1, bottom - top)
+    pad_x, pad_y = max(8, line_height // 3), max(6, line_height // 4)
+    crop = image[max(0, top - pad_y):min(image.shape[0], bottom + pad_y), max(0, left - pad_x):min(image.shape[1], right + pad_x)]
+    if crop.size == 0:
+        return ""
+    scaled = cv2.resize(crop, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+    text = pytesseract.image_to_string(
+        Image.fromarray(scaled),
+        lang="eng",
+        config="--psm 7 -c tessedit_char_whitelist=0123456789",
+    )
+    digits = normalize_nid(text)
+    return digits if 10 <= len(digits) <= 17 else ""
+
+
 def name_candidate_quality(value: str) -> tuple[int, int, int]:
     normalized = normalize_text(value)
     tokens = normalized.split()
@@ -179,7 +228,12 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
         confidences = [float(value) for value in data["conf"] if str(value) != "-1" and float(value) >= 0]
         confidence = sum(confidences) / len(confidences) / 100 if confidences else 0.0
         text = text_from_ocr_data(data).strip()
-        attempts.append({"text": text, "confidence": confidence, "fields": parse_ocr_fields(text)})
+        fields = parse_ocr_fields(text)
+        if fast:
+            targeted_nid = targeted_nid_from_ocr_data(variant, data)
+            if targeted_nid:
+                fields["nidNumber"] = targeted_nid
+        attempts.append({"text": text, "confidence": confidence, "fields": fields})
 
     fields = merge_ocr_fields(attempts)
     best = max(attempts, key=lambda attempt: (len(attempt["fields"]), attempt["confidence"]), default={"text": "", "confidence": 0.0})

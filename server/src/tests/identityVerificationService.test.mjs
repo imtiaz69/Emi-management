@@ -105,6 +105,24 @@ describe("identity verification policy", () => {
     expect(result.scores.profileNameSimilarity).toBeGreaterThanOrEqual(0.9);
   });
 
+  it("finds a profile name in OCR text when the printed Name label is missed", () => {
+    const changed = observation({
+      ocr: {
+        status: "COMPLETED",
+        rawText: "Government of Bangladesh HABIBUR RAHMAN Date of Birth 01 Dec 1999 NID No 331 408 9875",
+        fields: { nidNumber: "3314089875", dateOfBirth: "1999-12-01" },
+        confidence: 0.54,
+        warnings: ["Full name could not be extracted from the NID front."]
+      },
+      profileFields: { name: "Habibur Rahman", nidNumber: "3314089875", dateOfBirth: "1999-12-01" }
+    });
+    const result = buildDecision(changed, "document_only");
+    expect(result.overallStatus).toBe("VERIFIED");
+    expect(result.checks.profileNameMatch.status).toBe("PASS");
+    expect(result.scores.profileNameSimilarity).toBe(1);
+    expect(result.warnings).not.toContain("Full name could not be extracted from the NID front.");
+  });
+
   it("rejects a document-only check when a required field mismatches", () => {
     const changed = observation();
     changed.profileFields.dateOfBirth = "2000-01-01";

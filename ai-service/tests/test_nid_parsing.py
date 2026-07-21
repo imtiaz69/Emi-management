@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.engine import decode_qr, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, text_from_ocr_data
+from app.engine import decode_qr, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, targeted_nid_from_ocr_data, text_from_ocr_data
 
 
 def test_front_ocr_accepts_month_name_date():
@@ -59,6 +59,21 @@ def test_reconstructs_ocr_lines_without_a_second_tesseract_pass():
         "line_num": [1, 1, 1, 1, 2, 2],
     }
     assert text_from_ocr_data(data) == "Name: Demo Buyer\nNID: 1234567890"
+
+
+def test_targeted_nid_uses_the_number_line_coordinates(monkeypatch):
+    data = {
+        "text": ["Date", "01", "Dec", "1999", "NID", "No", "334", "408", "9875"],
+        "block_num": [1] * 9,
+        "par_num": [1] * 9,
+        "line_num": [1, 1, 1, 1, 2, 2, 2, 2, 2],
+        "left": [5, 50, 80, 120, 5, 45, 90, 145, 200],
+        "top": [10, 10, 10, 10, 60, 60, 60, 60, 60],
+        "width": [35, 20, 30, 45, 35, 35, 45, 45, 55],
+        "height": [20] * 9,
+    }
+    monkeypatch.setattr("app.engine.pytesseract.image_to_string", lambda *args, **kwargs: "331 408 9875")
+    assert targeted_nid_from_ocr_data(np.full((120, 320), 255, dtype=np.uint8), data) == "3314089875"
 
 
 def make_qr(payload: str) -> np.ndarray:

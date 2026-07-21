@@ -102,6 +102,20 @@ function calculateNameSimilarity(left, right) {
   );
 }
 
+function nameSimilarityInText(name, rawText) {
+  const normalizedName = normalizeText(name);
+  const textTokens = normalizeText(rawText).split(" ").filter(Boolean);
+  const nameTokenCount = normalizedName.split(" ").filter(Boolean).length;
+  if (!normalizedName || !textTokens.length || !nameTokenCount) return 0;
+  let best = 0;
+  for (const windowSize of new Set([nameTokenCount, nameTokenCount + 1])) {
+    for (let index = 0; index <= textTokens.length - windowSize; index += 1) {
+      best = Math.max(best, calculateNameSimilarity(normalizedName, textTokens.slice(index, index + windowSize).join(" ")));
+    }
+  }
+  return best;
+}
+
 function maskNid(value = "") {
   const normalized = normalizeNid(value);
   return normalized ? `${"*".repeat(Math.max(0, normalized.length - 4))}${normalized.slice(-4)}` : "";
@@ -146,10 +160,13 @@ function buildDecision(observation = {}, captureMode = "video") {
   const profileNid = normalizeNid(profile.nidNumber);
   const profileDob = normalizeDate(profile.dateOfBirth);
   const profileName = normalizeText(profile.name);
-  const profileNameSimilarity = calculateNameSimilarity(profileName, front.name);
+  const profileNameSimilarity = Math.max(
+    calculateNameSimilarity(profileName, front.name),
+    nameSimilarityInText(profileName, observation.ocr?.rawText)
+  );
   const profileNidStatus = !documentOnly ? "NOT_AVAILABLE" : profileNid && frontNid ? (profileNid === frontNid ? "PASS" : "FAIL") : "INCONCLUSIVE";
   const profileDobStatus = !documentOnly ? "NOT_AVAILABLE" : profileDob && frontDob ? (profileDob === frontDob ? "PASS" : "FAIL") : "INCONCLUSIVE";
-  const profileNameStatus = !documentOnly ? "NOT_AVAILABLE" : profileName && front.name
+  const profileNameStatus = !documentOnly ? "NOT_AVAILABLE" : profileName && (front.name || observation.ocr?.rawText)
     ? profileNameSimilarity >= limits.nameMatch
       ? "PASS"
       : profileNameSimilarity >= limits.nameBorderline
@@ -207,7 +224,8 @@ function buildDecision(observation = {}, captureMode = "video") {
   if (!documentOnly && faceStatus === "FAIL") failureReasons.push("The live face does not match the NID portrait.");
   if (!documentOnly && livenessStatus === "FAIL") failureReasons.push("The active liveness challenge was not completed.");
 
-  const warnings = [...(observation.ocr?.warnings || []), ...(observation.face?.warnings || []), ...(observation.liveness?.warnings || [])];
+  const warnings = [...(observation.ocr?.warnings || []), ...(observation.face?.warnings || []), ...(observation.liveness?.warnings || [])]
+    .filter((warning) => !(documentOnly && profileNameStatus === "PASS" && warning === "Full name could not be extracted from the NID front."));
   if (!documentOnly && qrStatus === "QR_DATA_UNREADABLE") warnings.push("The QR code could not be detected or read from the NID back.");
   if (!documentOnly && qrStatus === "QR_DATA_NOT_PARSEABLE") warnings.push("The QR code was detected, but it did not contain identity fields in a supported readable format.");
   if (captureMode === "selfie") warnings.push("Video liveness was unavailable; a selfie fallback was used.");
