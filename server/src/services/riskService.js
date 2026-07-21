@@ -37,7 +37,7 @@ async function calculateBuyerRiskProfile({ buyerId, principal = 0, downPayment =
   const debtToIncomeScore = clampScore(Math.min(100, loanToIncome * 25 + activeLoanCount * 8));
   const downPaymentRatio = Number(principal || 0) > 0 ? Number(downPayment || 0) / Number(principal || 0) : 0;
   const downPaymentScore = clampScore(100 - downPaymentRatio * 300);
-  const requiredProfileComplete = Boolean(profile?.address && profile?.nidNumber && profile?.emergencyContactPhone && monthlyIncome > 0 && profile?.occupation && profile?.employmentType);
+  const requiredProfileComplete = Boolean(profile?.address && profile?.nidNumber && profile?.dateOfBirth && profile?.emergencyContactPhone && monthlyIncome > 0 && profile?.occupation && profile?.employmentType);
   const kycScore = kycCount > 0 && requiredProfileComplete ? 0 : kycCount > 0 ? 35 : 100;
 
   const score = clampScore(overdueScore * 0.35 + paymentHistoryScore * 0.25 + debtToIncomeScore * 0.2 + downPaymentScore * 0.1 + kycScore * 0.1);

@@ -8,9 +8,11 @@ import {
   CalendarClock,
   ClipboardList,
   CreditCard,
+  FileCheck2,
   Heart,
   History,
   LayoutDashboard,
+  LoaderCircle,
   ShieldCheck,
   ShoppingCart,
   Star,
@@ -36,13 +38,31 @@ const buyerTabs = [
   { key: "wishlist", label: "Wishlist", icon: Heart, group: "Shopping" },
   { key: "orders", label: "Orders & delivery", icon: Truck, group: "Shopping" },
   { key: "profile", label: "Buyer profile", icon: UserRound, group: "Verification" },
-  { key: "kyc", label: "KYC upload", icon: ShieldCheck, group: "Verification" },
+  { key: "kyc", label: "NID verification", icon: ShieldCheck, group: "Verification" },
   { key: "loans", label: "My EMI loans", icon: BadgeDollarSign, group: "Finance" },
   { key: "applications", label: "EMI applications", icon: ClipboardList, group: "Finance" },
   { key: "payments", label: "Payment history", icon: History, group: "Finance" }
 ];
 
 const buyerTabKeys = new Set(buyerTabs.map((tab) => tab.key));
+const finishedVerificationStatuses = new Set(["COMPLETED", "ERROR", "EXPIRED", "CANCELLED"]);
+
+function verificationHeaders(token) {
+  return { Authorization: `Verification ${token}` };
+}
+
+function resultReason(session) {
+  return resultReasons(session)[0]
+    || session?.lastError
+    || "The NID information could not be verified. Use clearer images and try again.";
+}
+
+function resultReasons(session) {
+  return [...new Set([
+    ...(session?.result?.failureReasons || []),
+    ...(session?.result?.warnings || [])
+  ].filter(Boolean))];
+}
 
 function getInitialBuyerTab(search) {
   const tab = new URLSearchParams(search).get("tab");
@@ -54,12 +74,18 @@ export default function BuyerPortal() {
   const navigate = useNavigate();
   const location = useLocation();
   const handledStripeSessionRef = useRef("");
-  const [kycType, setKycType] = useState("nid");
+  const [kycType, setKycType] = useState("passport");
   const [files, setFiles] = useState([]);
+  const [nidFrontFile, setNidFrontFile] = useState(null);
+  const [nidVerificationId, setNidVerificationId] = useState("");
+  const [nidVerificationProgress, setNidVerificationProgress] = useState("");
+  const handledNidResultRef = useRef("");
   const [profilePhotoFile, setProfilePhotoFile] = useState(null);
   const [profileForm, setProfileForm] = useState({
+    name: "",
     address: "",
     nidNumber: "",
+    dateOfBirth: "",
     emergencyContactName: "",
     emergencyContactPhone: "",
     monthlyIncome: "",
@@ -80,6 +106,12 @@ export default function BuyerPortal() {
   const summary = useQuery({ queryKey: ["buyer-summary"], queryFn: async () => (await api.get("/reports/summary")).data });
   const orders = useQuery({ queryKey: ["buyer-orders"], queryFn: async () => (await api.get("/orders")).data });
   const wishlist = useQuery({ queryKey: ["wishlist"], queryFn: async () => (await api.get("/wishlist")).data });
+  const nidVerification = useQuery({
+    queryKey: ["buyer-nid-verification", nidVerificationId],
+    queryFn: async () => (await api.get(`/identity-verifications/buyer/${nidVerificationId}`)).data,
+    enabled: Boolean(nidVerificationId),
+    refetchInterval: (query) => finishedVerificationStatuses.has(query.state.data?.status) ? false : 2000
+  });
 
   useEffect(() => {
     setActiveTab(getInitialBuyerTab(location.search));
@@ -89,8 +121,10 @@ export default function BuyerPortal() {
     if (buyerProfile.data?.profile) {
       const profile = buyerProfile.data.profile;
       setProfileForm({
+        name: buyerProfile.data.accountName || "",
         address: profile.address || "",
         nidNumber: profile.nidNumber || "",
+        dateOfBirth: profile.dateOfBirth || "",
         emergencyContactName: profile.emergencyContactName || "",
         emergencyContactPhone: profile.emergencyContactPhone || "",
         monthlyIncome: profile.monthlyIncome ? String(profile.monthlyIncome) : "",
@@ -115,6 +149,69 @@ export default function BuyerPortal() {
     },
     onError: (err) => notifyError(err, "Unable to upload KYC documents.")
   });
+
+  async function uploadNidArtifact(kind, file, uploadToken) {
+    setNidVerificationProgress(`Uploading NID ${kind}...`);
+    const { data: signed } = await api.post(
+      "/identity-verifications/mobile/upload-signature",
+      { kind },
+      { headers: verificationHeaders(uploadToken) }
+    );
+    const form = new FormData();
+    form.append("file", file);
+    Object.entries(signed.params).forEach(([key, value]) => form.append(key, String(value)));
+    form.append("api_key", signed.apiKey);
+    form.append("signature", signed.signature);
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${signed.cloudName}/${signed.resourceType}/upload`, {
+      method: "POST",
+      body: form
+    });
+    if (!response.ok) throw new Error(`The NID ${kind} image could not be uploaded securely.`);
+    const uploaded = await response.json();
+    await api.post(
+      "/identity-verifications/mobile/artifacts",
+      { kind, publicId: uploaded.public_id },
+      { headers: verificationHeaders(uploadToken) }
+    );
+  }
+
+  const verifyNid = useMutation({
+    mutationFn: async () => {
+      if (!nidFrontFile) throw new Error("Select a clear image of the front of your NID.");
+      setNidVerificationProgress("Creating a secure verification session...");
+      const { data: created } = await api.post("/identity-verifications/buyer/start");
+      setNidVerificationId(created.session._id);
+      await uploadNidArtifact("front", nidFrontFile, created.uploadToken);
+      setNidVerificationProgress("Comparing the NID information with your buyer profile...");
+      const { data } = await api.post(
+        "/identity-verifications/mobile/complete",
+        {},
+        { headers: verificationHeaders(created.uploadToken) }
+      );
+      return data;
+    },
+    onSuccess: (session) => {
+      setNidVerificationId(session._id);
+      setNidFrontFile(null);
+      setNidVerificationProgress("Verification is processing. This can take a little longer when the free AI service is waking up.");
+      notifyInfo("NID verification submitted.");
+    },
+    onError: (error) => {
+      setNidVerificationProgress("");
+      notifyError(error, "Unable to verify the NID.");
+    }
+  });
+
+  useEffect(() => {
+    const session = nidVerification.data;
+    if (!session || session.status !== "COMPLETED" || handledNidResultRef.current === session._id) return;
+    handledNidResultRef.current = session._id;
+    setNidVerificationProgress("");
+    queryClient.invalidateQueries({ queryKey: ["kyc"] });
+    queryClient.invalidateQueries({ queryKey: ["buyer-profile"] });
+    if (session.result?.overallStatus === "VERIFIED") notifySuccess("NID verified. EMI requests are now available.");
+    else notifyError({ message: resultReason(session) }, "NID verification was denied.");
+  }, [nidVerification.data, queryClient]);
 
   const saveProfile = useMutation({
     mutationFn: async () => api.patch("/buyer/profile", { ...profileForm, monthlyIncome: Number(profileForm.monthlyIncome) }),
@@ -241,6 +338,8 @@ export default function BuyerPortal() {
   }
 
   const nextDueAmount = (loans.data || []).reduce((sum, loan) => sum + Number(loan.paymentSummary?.nextDueAmount || 0), 0);
+  const profileMissingFields = buyerProfile.data?.readiness?.missingFields || [];
+  const profileComplete = Boolean(buyerProfile.data) && profileMissingFields.length === 0;
   const paymentModalLoan = (loans.data || []).find((loan) => loan._id === paymentModalLoanId);
   const paymentModalDraft = paymentModalLoan ? paymentDrafts[paymentModalLoan._id] || { allocationMode: "next_due", installmentCount: "2", amount: "" } : null;
   const paymentModalPayload = paymentModalLoan ? buildPaymentPayload(paymentModalLoan) : null;
@@ -313,7 +412,7 @@ export default function BuyerPortal() {
 
               {buyerProfile.data?.readiness && !buyerProfile.data.readiness.ready && (
                 <div className="notice warning">
-                  EMI requests are locked until profile and KYC are complete. Missing: {[...(buyerProfile.data.readiness.missingFields || []), buyerProfile.data.readiness.hasKyc ? null : "KYC upload"].filter(Boolean).join(", ")}.
+                  EMI requests are locked until your profile is complete and your NID is approved. Missing: {[...(buyerProfile.data.readiness.missingFields || []), buyerProfile.data.readiness.hasKyc ? null : "approved NID verification"].filter(Boolean).join(", ")}.
                 </div>
               )}
 
@@ -396,11 +495,17 @@ export default function BuyerPortal() {
                 </div>
               </div>
               <div className="form-grid compact">
+                <label>Full name used for verification
+                  <input value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} placeholder="Enter your name exactly as shown on the NID" />
+                </label>
                 <label>Address
                   <input value={profileForm.address} onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })} placeholder="Example: Akhalia, Sylhet" />
                 </label>
                 <label>NID number
                   <input value={profileForm.nidNumber} onChange={(e) => setProfileForm({ ...profileForm, nidNumber: e.target.value })} placeholder="Example: 1234567890" />
+                </label>
+                <label>Date of birth
+                  <input type="date" value={profileForm.dateOfBirth} onChange={(e) => setProfileForm({ ...profileForm, dateOfBirth: e.target.value })} />
                 </label>
                 <label>Emergency contact name
                   <input value={profileForm.emergencyContactName} onChange={(e) => setProfileForm({ ...profileForm, emergencyContactName: e.target.value })} placeholder="Example: Parent or spouse" />
@@ -431,44 +536,125 @@ export default function BuyerPortal() {
           )}
 
           {activeTab === "kyc" && (
-            <section className="panel">
-              <h2>KYC upload</h2>
-              <div className="form-grid compact">
-                <label>Document type
-                  <select value={kycType} onChange={(e) => setKycType(e.target.value)}>
-                    {KYC_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                  </select>
-                </label>
-                <label>Documents
-                  <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.pdf" onChange={(e) => setFiles(e.target.files)} />
-                </label>
-              </div>
-              <p className="hint">You can upload more records any time. Each submission supports up to 10 files.</p>
-              <button className="button" onClick={() => uploadKyc.mutate()} disabled={!files.length || uploadKyc.isPending}>Upload documents</button>
-              <div className="list-stack">
-                {(kyc.data || []).length === 0 ? (
-                  <p className="hint">No KYC documents uploaded yet.</p>
-                ) : (
-                  (kyc.data || []).map((doc) => (
-                    <div className="list-row" key={doc._id}>
-                      <div>
-                        <strong>{formatKycType(doc.type)}</strong>
-                        <span>Uploaded {doc.createdAt ? dayjs(doc.createdAt).format("DD MMM YYYY") : "-"}</span>
-                      </div>
-                      <div className="button-row">
-                        {(doc.files || []).map((file) => (
-                          <ProtectedDocumentViewer key={file.downloadUrl} file={file} label={file.originalName || "Document"} />
-                        ))}
-                        {doc.selfie && (
-                          <ProtectedDocumentViewer file={doc.selfie} label="Selfie" />
-                        )}
-                        <StatusBadge status={doc.status} />
-                      </div>
-                    </div>
-                  ))
+            <div className="kyc-workspace">
+              <section className="panel nid-verification-panel">
+                <div className="page-title">
+                  <div>
+                    <span className="identity-eyebrow"><ShieldCheck size={15} /> EMI identity requirement</span>
+                    <h2>Verify your Bangladesh NID front</h2>
+                    <p>Upload a clear photo of the front. The system reads the full name, NID number, and date of birth and compares them with your completed buyer profile.</p>
+                  </div>
+                  <div className="nid-approval-state">
+                    <span>EMI permission</span>
+                    <StatusBadge status={buyerProfile.data?.readiness?.hasKyc ? "approved" : "locked"} />
+                  </div>
+                </div>
+
+                {!profileComplete && (
+                  <div className="notice warning">
+                    <strong>Complete your buyer profile first</strong>
+                    <p>Save these required fields before uploading an NID: {profileMissingFields.join(", ") || "profile information"}. Your registered full name, NID number, and date of birth must match the card.</p>
+                  </div>
                 )}
-              </div>
-            </section>
+
+                <div className="nid-upload-grid front-only">
+                  <label className={`nid-upload-box ${nidFrontFile ? "selected" : ""} ${!profileComplete ? "disabled" : ""}`}>
+                    <span className="mobile-step-number">1</span>
+                    <CreditCard size={28} />
+                    <strong>Front side of NID</strong>
+                    <small>Keep the name, NID number, and date of birth sharp and readable.</small>
+                    <span className="nid-file-name">{nidFrontFile?.name || "Choose front image"}</span>
+                    <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!profileComplete} onChange={(event) => setNidFrontFile(event.target.files?.[0] || null)} />
+                  </label>
+                </div>
+
+                <div className="nid-verify-actions">
+                  <button className="button" onClick={() => verifyNid.mutate()} disabled={!profileComplete || !nidFrontFile || verifyNid.isPending}>
+                    {verifyNid.isPending ? <LoaderCircle className="spin" size={17} /> : <FileCheck2 size={17} />}
+                    Verify NID
+                  </button>
+                  <p>The image is stored privately and removed after the configured review period. This compares the supplied card with your profile; it is not a government database check.</p>
+                </div>
+
+                {(nidVerificationProgress || nidVerification.isFetching) && !finishedVerificationStatuses.has(nidVerification.data?.status) && (
+                  <div className="identity-processing">
+                    <div className="spinner" />
+                    <div><strong>{String(nidVerification.data?.status || "UPLOADING").replaceAll("_", " ")}</strong><p>{nidVerificationProgress || "Checking verification status..."}</p></div>
+                  </div>
+                )}
+
+                {nidVerification.data?.status === "COMPLETED" && nidVerification.data.result && (
+                  <div className={`nid-verification-result ${nidVerification.data.result.overallStatus === "VERIFIED" ? "approved" : "denied"}`}>
+                    <div className="page-title">
+                      <div>
+                        <span>Verification result</span>
+                        <h3>{nidVerification.data.result.overallStatus === "VERIFIED" ? "NID verified successfully" : "EMI permission denied"}</h3>
+                      </div>
+                      <StatusBadge status={nidVerification.data.result.overallStatus} />
+                    </div>
+                    <div className="identity-checks compact-checks">
+                      {[
+                        ["NID front readable", nidVerification.data.result.checks?.frontOcr],
+                        ["Profile NID number", nidVerification.data.result.checks?.profileNidNumberMatch],
+                        ["Profile full name", nidVerification.data.result.checks?.profileNameMatch],
+                        ["Profile date of birth", nidVerification.data.result.checks?.profileDateOfBirthMatch]
+                      ].map(([label, check]) => (
+                        <div className={`identity-check identity-${String(check?.status || "inconclusive").toLowerCase()}`} key={label}>
+                          <ShieldCheck size={16} /><span><strong>{label}</strong><small>{check?.detail || "Profile and NID front comparison"}</small></span><b>{check?.status || "INCONCLUSIVE"}</b>
+                        </div>
+                      ))}
+                    </div>
+                    {nidVerification.data.result.overallStatus !== "VERIFIED" && (
+                      <div className="notice error">
+                        <strong>Reasons</strong>
+                        {(resultReasons(nidVerification.data).length ? resultReasons(nidVerification.data) : [resultReason(nidVerification.data)])
+                          .map((reason) => <p key={reason}>{reason}</p>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {nidVerification.data?.status === "ERROR" && <div className="notice error"><strong>Verification could not finish</strong><p>{resultReason(nidVerification.data)}</p></div>}
+              </section>
+
+              <section className="panel">
+                <h2>Additional supporting documents</h2>
+                <div className="form-grid compact">
+                  <label>Document type
+                    <select value={kycType} onChange={(e) => setKycType(e.target.value)}>
+                      {KYC_DOCUMENT_TYPES.filter((type) => type.value !== "nid").map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                    </select>
+                  </label>
+                  <label>Documents
+                    <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.pdf" onChange={(e) => setFiles(e.target.files)} />
+                  </label>
+                </div>
+                <p className="hint">Passport, TIN, job ID, salary, bank, and other documents support later review. They do not replace successful NID verification for EMI permission.</p>
+                <button className="button secondary" onClick={() => uploadKyc.mutate()} disabled={!files.length || uploadKyc.isPending}>Upload supporting documents</button>
+                <div className="list-stack">
+                  {(kyc.data || []).length === 0 ? (
+                    <p className="hint">No identity documents uploaded yet.</p>
+                  ) : (
+                    (kyc.data || []).map((doc) => (
+                      <div className="list-row" key={doc._id}>
+                        <div>
+                          <strong>{formatKycType(doc.type)}</strong>
+                          <span>Uploaded {doc.createdAt ? dayjs(doc.createdAt).format("DD MMM YYYY") : "-"}</span>
+                          {doc.rejectionReason && <small className="validation-error">Reason: {doc.rejectionReason}</small>}
+                        </div>
+                        <div className="button-row">
+                          {(doc.files || []).map((file) => (
+                            <ProtectedDocumentViewer key={file.downloadUrl} file={file} label={file.originalName || "Document"} />
+                          ))}
+                          {doc.selfie && <ProtectedDocumentViewer file={doc.selfie} label="Selfie" />}
+                          <StatusBadge status={doc.status} />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            </div>
           )}
 
           {activeTab === "loans" && (

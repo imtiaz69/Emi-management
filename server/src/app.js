@@ -16,6 +16,7 @@ const couponRoutes = require("./routes/couponRoutes");
 const disputeRoutes = require("./routes/disputeRoutes");
 const emiApplicationRoutes = require("./routes/emiApplicationRoutes");
 const inventoryRoutes = require("./routes/inventoryRoutes");
+const identityVerificationRoutes = require("./routes/identityVerificationRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const productRoutes = require("./routes/productRoutes");
 const profileRoutes = require("./routes/profileRoutes");
@@ -37,6 +38,15 @@ const { authenticate, authorize } = require("./middleware/auth");
 const { createRateLimiter, mongoSanitize } = require("./middleware/security");
 
 const app = express();
+const clientOrigins = (process.env.CLIENT_URL || "http://localhost:5173").split(",").map((value) => value.trim()).filter(Boolean);
+const isDevelopmentLocalOrigin = (origin) => {
+  if (process.env.NODE_ENV === "production") return false;
+  try {
+    return ["localhost", "127.0.0.1"].includes(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+};
 const authLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: "Too many auth attempts. Please try again later." });
 const sensitiveLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 80, message: "Too many sensitive requests. Please slow down." });
 
@@ -52,7 +62,13 @@ app.use(
     }
   })
 );
-app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || clientOrigins.includes(origin) || isDevelopmentLocalOrigin(origin)) return callback(null, true);
+    return callback(new Error("Origin is not allowed by CORS"));
+  },
+  credentials: true
+}));
 app.post("/api/payments/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
@@ -80,6 +96,7 @@ app.use("/api/coupons", couponRoutes);
 app.use("/api/disputes", disputeRoutes);
 app.use("/api/emi-applications", emiApplicationRoutes);
 app.use("/api/inventory", inventoryRoutes);
+app.use("/api/identity-verifications", identityVerificationRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/profiles", profileRoutes);

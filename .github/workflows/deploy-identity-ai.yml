@@ -1,0 +1,43 @@
+name: Deploy identity AI service
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ai-service/**"
+      - ".github/workflows/deploy-identity-ai.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Hugging Face client
+        run: pip install --disable-pip-version-check huggingface_hub==0.34.3
+      - name: Upload Docker Space source
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          space_id = os.environ.get("HF_SPACE_ID")
+          if not token or not space_id:
+              raise SystemExit("Configure HF_TOKEN secret and HF_SPACE_ID repository variable")
+          HfApi(token=token).upload_folder(
+              repo_id=space_id,
+              repo_type="space",
+              folder_path="ai-service",
+              commit_message="Deploy FinanceLend identity AI service",
+              ignore_patterns=["__pycache__/**", ".pytest_cache/**", "*.pyc"],
+          )
+          PY

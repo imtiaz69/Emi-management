@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 const SellerProfile = require("../models/SellerProfile");
 const BuyerProfile = require("../models/BuyerProfile");
+const KYCDocument = require("../models/KYCDocument");
 const PendingRegistration = require("../models/PendingRegistration");
 const RefreshToken = require("../models/RefreshToken");
 const asyncHandler = require("../utils/asyncHandler");
@@ -374,7 +375,15 @@ router.patch(
     const normalizedPhone = normalizeBangladeshPhone(req.body.phone);
     const existingPhone = await User.findOne({ phone: { $in: getPhoneLookupVariants(normalizedPhone) }, _id: { $ne: req.user._id } });
     if (existingPhone) return res.status(409).json({ message: "Phone number already exists" });
+    const normalizedPreviousName = String(req.user.name || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const normalizedNextName = String(req.body.name || "").trim().replace(/\s+/g, " ").toUpperCase();
     const user = await User.findByIdAndUpdate(req.user._id, { name: req.body.name, phone: normalizedPhone }, { new: true });
+    if (req.user.role === "buyer" && normalizedPreviousName !== normalizedNextName) {
+      await KYCDocument.updateMany(
+        { userId: req.user._id, type: "nid", verificationMethod: "identity_cross_validation", status: "approved" },
+        { $set: { status: "rejected", rejectionReason: "Account name changed after verification. Please verify the NID again." } }
+      );
+    }
     await writeAudit(req.user._id, "auth.account_updated", "User", user._id);
     res.json({ user: sanitizeUser(user) });
   })

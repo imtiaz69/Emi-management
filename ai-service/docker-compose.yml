@@ -1,0 +1,12 @@
+services:
+  identity-ai:
+    build: .
+    ports:
+      - "8001:7860"
+    environment:
+      IDENTITY_AI_SERVICE_KEY: ${IDENTITY_AI_SERVICE_KEY}
+      IDENTITY_LIVENESS_ENABLED: ${IDENTITY_LIVENESS_ENABLED:-true}
+      IDENTITY_ALLOWED_ASSET_HOSTS: ${IDENTITY_ALLOWED_ASSET_HOSTS:-host.docker.internal}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

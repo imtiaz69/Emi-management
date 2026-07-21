@@ -21,6 +21,7 @@ import {
   PackagePlus,
   ReceiptText,
   RefreshCcw,
+  ScanFace,
   ShieldCheck,
   ShoppingCart,
   X,
@@ -32,6 +33,7 @@ import { api, openProtectedFile } from "../api/http";
 import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
 import ProtectedImage from "../components/ProtectedImage.jsx";
 import DashboardShell from "../components/DashboardShell.jsx";
+import IdentityVerificationPanel from "../components/IdentityVerificationPanel.jsx";
 import NotificationInbox from "../components/NotificationInbox.jsx";
 import StatCard from "../components/StatCard.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -46,6 +48,7 @@ const tabs = [
   { key: "recordPayment", label: "Record payment", icon: ReceiptText, group: "Lending" },
   { key: "activeLoans", label: "Active EMI loans", icon: BadgeDollarSign, group: "Lending" },
   { key: "kycRequests", label: "KYC requests", icon: ShieldCheck, group: "Lending" },
+  { key: "identityVerification", label: "Identity verification", icon: ScanFace, group: "Lending" },
   { key: "addProduct", label: "Add products", icon: PackagePlus, group: "Commerce" },
   { key: "myProducts", label: "My products", icon: Boxes, group: "Commerce" },
   { key: "orders", label: "Orders", icon: ShoppingCart, group: "Commerce" },
@@ -1782,6 +1785,7 @@ export default function SellerDashboard() {
           </form>
         </div>
       )}
+      {activeTab === "identityVerification" && <IdentityVerificationPanel />}
     </DashboardShell>
   );
 }

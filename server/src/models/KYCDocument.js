@@ -31,6 +31,16 @@ const kycDocumentSchema = new mongoose.Schema(
     type: { type: String, enum: KYC_DOCUMENT_TYPES, required: true },
     files: [fileSchema],
     selfie: fileSchema,
+    identityVerificationSessionId: { type: mongoose.Schema.Types.ObjectId, ref: "IdentityVerificationSession", index: true },
+    verificationMethod: { type: String, enum: ["manual_upload", "identity_cross_validation"], default: "manual_upload" },
+    automatedVerification: {
+      overallStatus: String,
+      resultId: { type: mongoose.Schema.Types.ObjectId, ref: "IdentityVerificationResult" },
+      processedAt: Date,
+      revokedAt: Date,
+      revokedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      revocationReason: String
+    },
     status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending", index: true },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     reviewedAt: Date,

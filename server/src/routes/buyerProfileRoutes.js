@@ -1,6 +1,7 @@
 const express = require("express");
 const fs = require("fs");
 const BuyerProfile = require("../models/BuyerProfile");
+const KYCDocument = require("../models/KYCDocument");
 const asyncHandler = require("../utils/asyncHandler");
 const { authenticate, authorize } = require("../middleware/auth");
 const { assertUploadedFilesSafe, createUploader } = require("../middleware/upload");
@@ -14,8 +15,10 @@ const router = express.Router();
 const upload = createUploader("profiles");
 
 const buyerProfileSchema = z.object({
+  name: z.string().trim().min(2).max(120),
   address: z.string().trim().min(3).max(300),
   nidNumber: z.string().trim().min(5).max(40),
+  dateOfBirth: z.string().date(),
   emergencyContactName: z.string().trim().max(120).optional().default(""),
   emergencyContactPhone: z.string().trim().min(5).max(30),
   monthlyIncome: z.coerce.number().min(1),
@@ -30,7 +33,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const profile = await BuyerProfile.findOneAndUpdate({ userId: req.user._id }, { $setOnInsert: { userId: req.user._id } }, { new: true, upsert: true });
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ accountName: req.user.name, profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
   })
 );
 
@@ -40,9 +43,27 @@ router.patch(
   authorize("buyer"),
   validateBody(buyerProfileSchema),
   asyncHandler(async (req, res) => {
-    const profile = await BuyerProfile.findOneAndUpdate({ userId: req.user._id }, { ...req.body, userId: req.user._id }, { new: true, upsert: true });
+    const previous = await BuyerProfile.findOne({ userId: req.user._id }).select("nidNumber dateOfBirth");
+    const normalizedPreviousName = String(req.user.name || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const normalizedNextName = String(req.body.name || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const identityChanged = previous && (
+      String(previous.nidNumber || "").trim() !== String(req.body.nidNumber || "").trim()
+      || String(previous.dateOfBirth || "").trim() !== String(req.body.dateOfBirth || "").trim()
+      || normalizedPreviousName !== normalizedNextName
+    );
+    const { name, ...profileData } = req.body;
+    const [profile] = await Promise.all([
+      BuyerProfile.findOneAndUpdate({ userId: req.user._id }, { ...profileData, userId: req.user._id }, { new: true, upsert: true }),
+      req.user.updateOne({ name })
+    ]);
+    if (identityChanged) {
+      await KYCDocument.updateMany(
+        { userId: req.user._id, type: "nid", verificationMethod: "identity_cross_validation", status: "approved" },
+        { $set: { status: "rejected", rejectionReason: "Profile identity information changed after verification. Please verify the NID again." } }
+      );
+    }
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ accountName: name, profile: sanitizeBuyerProfile(profile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
   })
 );
 
@@ -67,7 +88,7 @@ router.post(
     await writeAudit(req.user._id, "buyer.profile_photo.updated", "BuyerProfile", currentProfile._id);
 
     const readiness = await getBuyerReadiness(req.user._id);
-    res.json({ profile: sanitizeBuyerProfile(currentProfile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
+    res.json({ accountName: req.user.name, profile: sanitizeBuyerProfile(currentProfile), readiness: { ready: readiness.ready, missingFields: readiness.missingFields, hasKyc: readiness.hasKyc } });
   })
 );
 

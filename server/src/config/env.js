@@ -9,7 +9,10 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default("15m"),
   REFRESH_TOKEN_SECRET: z.string().optional(),
   REFRESH_TOKEN_EXPIRES_IN_DAYS: z.coerce.number().int().positive().default(30),
-  CLIENT_URL: z.string().url().optional(),
+  CLIENT_URL: z.string().refine(
+    (value) => value.split(",").map((item) => item.trim()).filter(Boolean).every((item) => z.string().url().safeParse(item).success),
+    "Must contain one or more valid comma-separated URLs"
+  ).optional(),
   APP_TIMEZONE: z.string().default("Asia/Dhaka"),
   EMAIL_PROVIDER: z.enum(["mock", "gmail", "gmail_api", "resend", "relay"]).default("mock"),
   SMTP_HOST: z.string().default("smtp.gmail.com"),
@@ -33,7 +36,20 @@ const envSchema = z.object({
   ALLOW_STRIPE_CURRENCY_CONVERSION: z.string().optional(),
   ALLOW_STRIPE_RETURN_CONFIRM: z.string().optional(),
   AUTO_SEED: z.string().optional(),
-  UPLOAD_DIR: z.string().default("uploads")
+  UPLOAD_DIR: z.string().default("uploads"),
+  PUBLIC_CLIENT_URL: z.string().url().optional(),
+  IDENTITY_AI_URL: z.string().url().optional(),
+  IDENTITY_PUBLIC_API_URL: z.string().url().optional(),
+  IDENTITY_AI_SERVICE_KEY: z.string().min(32).optional(),
+  IDENTITY_DATA_ENCRYPTION_KEY: z.string().optional(),
+  IDENTITY_SESSION_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  IDENTITY_ARTIFACT_RETENTION_HOURS: z.coerce.number().positive().default(24),
+  IDENTITY_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(180000),
+  IDENTITY_NAME_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.9),
+  IDENTITY_NAME_BORDERLINE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.78),
+  IDENTITY_FACE_MATCH_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.363),
+  IDENTITY_FACE_BORDERLINE_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.3),
+  IDENTITY_LIVENESS_ENABLED: z.string().optional()
 });
 
 function validateEnv() {
@@ -67,6 +83,12 @@ function validateEnv() {
   if (env.EMAIL_PROVIDER === "relay") {
     if (!env.EMAIL_RELAY_URL) missing.push("EMAIL_RELAY_URL");
     if (!env.EMAIL_RELAY_SECRET) missing.push("EMAIL_RELAY_SECRET with at least 32 characters");
+  }
+  if (env.IDENTITY_AI_URL) {
+    if (!env.IDENTITY_AI_SERVICE_KEY) missing.push("IDENTITY_AI_SERVICE_KEY with at least 32 characters");
+    if (!env.IDENTITY_PUBLIC_API_URL) missing.push("IDENTITY_PUBLIC_API_URL");
+    const encryptionKey = env.IDENTITY_DATA_ENCRYPTION_KEY ? Buffer.from(env.IDENTITY_DATA_ENCRYPTION_KEY, "base64") : null;
+    if (!encryptionKey || encryptionKey.length !== 32) missing.push("IDENTITY_DATA_ENCRYPTION_KEY as a base64-encoded 32-byte key");
   }
   if (missing.length) {
     throw new Error(`Missing production environment values: ${missing.join(", ")}`);

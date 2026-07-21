@@ -33,15 +33,43 @@ async function uploadFile(filePath, folder, { private: isPrivate = false } = {})
 }
 
 async function deleteUploadedFile(file = {}) {
-  if (!file.path) return;
-  if (file.resourceType === "local" || file.path.startsWith("/uploads/")) {
+  if (!file.path && !file.publicId) return;
+  if (file.resourceType === "local" || file.path?.startsWith("/uploads/")) {
     const localPath = file.path.replace(/^\/uploads\//, `${process.env.UPLOAD_DIR || "uploads"}/`);
     await require("fs").promises.unlink(localPath).catch(() => {});
     return;
   }
   if (file.publicId && process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-    await cloudinary.uploader.destroy(file.publicId, { resource_type: file.resourceType || "image" }).catch(() => {});
+    const options = { resource_type: file.resourceType || "image" };
+    if (!file.path || String(file.path).includes("/authenticated/")) options.type = "authenticated";
+    await cloudinary.uploader.destroy(file.publicId, options).catch(() => {});
   }
+}
+
+function assertCloudinaryConfigured() {
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+    const error = new Error("Secure identity capture requires Cloudinary configuration");
+    error.status = 503;
+    throw error;
+  }
+}
+
+function createSignedDirectUpload({ publicId, resourceType }) {
+  assertCloudinaryConfigured();
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params = { public_id: publicId, timestamp, type: "authenticated", overwrite: false };
+  return {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    resourceType,
+    params,
+    signature: cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET)
+  };
+}
+
+async function getUploadedResource(publicId, resourceType) {
+  assertCloudinaryConfigured();
+  return cloudinary.api.resource(publicId, { resource_type: resourceType, type: "authenticated" });
 }
 
 function getSignedDeliveryUrl(publicId, resourceType = "image") {
@@ -54,4 +82,10 @@ function getSignedDeliveryUrl(publicId, resourceType = "image") {
   });
 }
 
-module.exports = { deleteUploadedFile, getSignedDeliveryUrl, uploadFile };
+module.exports = {
+  createSignedDirectUpload,
+  deleteUploadedFile,
+  getSignedDeliveryUrl,
+  getUploadedResource,
+  uploadFile
+};

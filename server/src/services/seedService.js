@@ -67,7 +67,21 @@ async function seedDemoData({ reset = false } = {}) {
     password: "Buyer@123",
     role: "buyer"
   });
-  await BuyerProfile.findOneAndUpdate({ userId: buyer._id }, { userId: buyer._id, address: "Akhalia, Sylhet", nidNumber: "1234567890" }, { upsert: true });
+  await BuyerProfile.findOneAndUpdate(
+    { userId: buyer._id },
+    {
+      userId: buyer._id,
+      address: "Akhalia, Sylhet",
+      nidNumber: "1234567890",
+      dateOfBirth: "1998-05-15",
+      emergencyContactName: "Demo Contact",
+      emergencyContactPhone: "01700000000",
+      monthlyIncome: 45000,
+      occupation: "Service holder",
+      employmentType: "salaried"
+    },
+    { upsert: true }
+  );
 
   const products = await Product.insertMany([
     {

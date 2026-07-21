@@ -63,6 +63,14 @@ export function NotificationProvider({ children }) {
       queryClient.setQueryData(["notifications"], (current) => addNotification(current, notification));
       showRealtimeToast(notification);
     });
+    socket.on("identity:session.updated", ({ sessionId }) => {
+      queryClient.invalidateQueries({ queryKey: ["identity-verifications"] });
+      queryClient.invalidateQueries({ queryKey: ["identity-verification", sessionId] });
+    });
+    socket.on("identity:session.completed", ({ sessionId }) => {
+      queryClient.invalidateQueries({ queryKey: ["identity-verifications"] });
+      queryClient.invalidateQueries({ queryKey: ["identity-verification", sessionId] });
+    });
 
     return () => {
       socket.removeAllListeners();

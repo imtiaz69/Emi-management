@@ -11,6 +11,7 @@ import {
   RefreshCcw,
   Scale,
   ScrollText,
+  ScanFace,
   Settings2,
   ShieldCheck,
   ShoppingCart,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import { api } from "../api/http";
 import DashboardShell from "../components/DashboardShell.jsx";
+import IdentityVerificationPanel from "../components/IdentityVerificationPanel.jsx";
 import NotificationInbox from "../components/NotificationInbox.jsx";
 import ProtectedDocumentViewer from "../components/ProtectedDocumentViewer.jsx";
 import ProtectedImage from "../components/ProtectedImage.jsx";
@@ -32,6 +34,7 @@ const adminTabs = [
   { key: "notifications", label: "Notifications", icon: Bell, group: "Workspace" },
   { key: "sellerApprovals", label: "Seller approvals", icon: Store, group: "Governance" },
   { key: "kycReview", label: "KYC review", icon: ShieldCheck, group: "Governance" },
+  { key: "identityVerification", label: "Identity verification", icon: ScanFace, group: "Governance" },
   { key: "users", label: "Users", icon: Users, group: "Governance" },
   { key: "products", label: "Products", icon: PackageSearch, group: "Commerce" },
   { key: "orders", label: "Orders", icon: ShoppingCart, group: "Commerce" },
@@ -366,6 +369,7 @@ export default function AdminPanel() {
       )}
 
       {activeTab === "notifications" && <NotificationInbox />}
+      {activeTab === "identityVerification" && <IdentityVerificationPanel />}
     </DashboardShell>
   );
 }

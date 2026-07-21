@@ -1,0 +1,40 @@
+import cv2
+import numpy as np
+
+from app.engine import decode_qr, parse_ocr_fields
+
+
+def test_front_ocr_accepts_month_name_date():
+    fields = parse_ocr_fields("Name: Test Buyer\nNID No: 1234567890\nDate of Birth: 31 Dec 2002")
+    assert fields == {"name": "TEST BUYER", "nidNumber": "1234567890", "dateOfBirth": "2002-12-31"}
+
+
+def test_front_ocr_accepts_full_month_and_bengali_digits():
+    fields = parse_ocr_fields("Name: Test Buyer\nNID: ১২৩৪৫৬৭৮৯০\nDate of Birth: ৩১ December ২০০২")
+    assert fields == {"name": "TEST BUYER", "nidNumber": "1234567890", "dateOfBirth": "2002-12-31"}
+
+
+def make_qr(payload: str) -> np.ndarray:
+    encoded = cv2.QRCodeEncoder_create().encode(payload)
+    return cv2.cvtColor(cv2.resize(encoded, (720, 720), interpolation=cv2.INTER_NEAREST), cv2.COLOR_GRAY2BGR)
+
+
+def test_rotated_qr_is_decoded_and_parsed():
+    image = cv2.rotate(make_qr('{"name":"Test Buyer","nid":"1234567890","dob":"31 Dec 2002"}'), cv2.ROTATE_90_CLOCKWISE)
+    result = decode_qr(image)
+    assert result["status"] == "DECODED"
+    assert result["fields"] == {"name": "TEST BUYER", "nidNumber": "1234567890", "dateOfBirth": "2002-12-31"}
+
+
+def test_low_contrast_qr_is_enhanced_before_decoding():
+    image = make_qr("Name: Test Buyer|NID: 1234567890|DOB: 31 Dec 2002")
+    low_contrast = cv2.convertScaleAbs(image, alpha=0.28, beta=150)
+    result = decode_qr(low_contrast)
+    assert result["status"] == "DECODED"
+    assert result["fields"]["dateOfBirth"] == "2002-12-31"
+
+
+def test_opaque_qr_never_returns_identity_fields():
+    result = decode_qr(make_qr("opaque-encrypted-data"))
+    assert result["status"] == "QR_DATA_NOT_PARSEABLE"
+    assert result["fields"] == {}

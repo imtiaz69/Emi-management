@@ -1,13 +1,14 @@
 # EMI Management and Loan Tracking System
 
-Final-year MERN MVP for small businesses and micro-loan providers. It supports seller product management, offline EMI creation, buyer marketplace EMI requests, admin seller approval, KYC upload, payment recording, overdue automation, risk buckets, and PDF/Excel report exports.
+Final-year commerce, EMI management, and customer identity cross-validation platform for small businesses and micro-loan providers.
 
 ## Tech Stack
 
 - Frontend: React, Vite, React Router, TanStack Query, Recharts
 - Backend: Node.js, Express, MongoDB, Mongoose
 - Utilities: JWT auth, Multer uploads, node-cron reminders, PDFKit, ExcelJS
-- Demo integrations: mock OTP, mock SMS/email/in-app notifications, mock payment gateway, Stripe Checkout test payments
+- Integrations: Stripe Checkout, Gmail verification email, Cloudinary private media, Socket.IO notifications
+- AI service: FastAPI, Tesseract OCR, ZXing, OpenCV YuNet/SFace, and MediaPipe basic liveness
 
 ## Quick Start
 
@@ -40,7 +41,7 @@ npm test               # run backend EMI unit tests
 npm run seed           # seed configured MongoDB
 ```
 
-## Implemented MVP Flows
+## Main Flows
 
 - Register/login for buyers and sellers.
 - Admin approval/rejection for seller registration.
@@ -50,6 +51,12 @@ npm run seed           # seed configured MongoDB
 - EMI engine supporting flat, reducing balance, and zero-interest schedules.
 - Daily overdue/reminder job plus manual trigger from seller dashboard.
 - Audit logs for important actions.
+- Laptop-to-phone identity verification sessions with one-time QR links.
+- NID front OCR and back QR field comparison.
+- NID portrait versus live-face similarity and basic active liveness.
+- Automatic KYC approval only for fully verified results, with admin overrides.
+
+See [IDENTITY_VERIFICATION_GUIDE.md](IDENTITY_VERIFICATION_GUIDE.md) for local setup, free Hugging Face deployment, the complete demonstration flow, privacy controls, and limitations.
 
 ## API Highlights
 

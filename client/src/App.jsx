@@ -20,6 +20,7 @@ import AdminPanel from "./pages/AdminPanel.jsx";
 import SellerPending from "./pages/SellerPending.jsx";
 import AccountSettings from "./pages/AccountSettings.jsx";
 import SellerStoreProfile from "./pages/SellerStoreProfile.jsx";
+import MobileIdentityVerification from "./pages/MobileIdentityVerification.jsx";
 
 function Protected({ roles, requireActiveSeller = false, children }) {
   const { user, isAuthenticated } = useAuth();
@@ -33,6 +34,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/verify/mobile" element={<MobileIdentityVerification />} />
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />

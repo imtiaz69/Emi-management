@@ -6,6 +6,7 @@ const { connectDB } = require("./config/db");
 const { runOverdueCheck, startOverdueJob } = require("./jobs/overdueJob");
 const { seedDemoData } = require("./services/seedService");
 const { initializeSocket } = require("./services/socketService");
+const { startIdentityVerificationJobs } = require("./jobs/identityVerificationJob");
 
 const env = validateEnv();
 const port = env.PORT || 5000;
@@ -19,6 +20,7 @@ connectDB()
       console.log("Demo data ready");
     }
     startOverdueJob();
+    startIdentityVerificationJobs();
     runOverdueCheck().catch((error) => console.error("Initial notification check failed", error));
     server.listen(port, () => {
       console.log(`EMI Management API and Socket.IO running on http://localhost:${port}`);

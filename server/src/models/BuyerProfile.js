@@ -19,6 +19,7 @@ const buyerProfileSchema = new mongoose.Schema(
     profilePhoto: fileSchema,
     address: { type: String, default: "" },
     nidNumber: { type: String, default: "" },
+    dateOfBirth: { type: String, default: "" },
     emergencyContactName: { type: String, default: "" },
     emergencyContactPhone: { type: String, default: "" },
     monthlyIncome: { type: Number, default: 0, min: 0 },

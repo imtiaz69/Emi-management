@@ -57,3 +57,19 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: PUBLIC_CLIENT_URL
+        sync: false
+      - key: IDENTITY_AI_URL
+        sync: false
+      - key: IDENTITY_PUBLIC_API_URL
+        sync: false
+      - key: IDENTITY_AI_SERVICE_KEY
+        sync: false
+      - key: IDENTITY_DATA_ENCRYPTION_KEY
+        sync: false
+      - key: IDENTITY_SESSION_TTL_MINUTES
+        value: "10"
+      - key: IDENTITY_ARTIFACT_RETENTION_HOURS
+        value: "24"
+      - key: IDENTITY_AI_TIMEOUT_MS
+        value: "180000"

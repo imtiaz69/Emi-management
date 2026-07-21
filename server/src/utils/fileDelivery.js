@@ -1,4 +1,6 @@
 const path = require("path");
+const { Readable } = require("stream");
+const { pipeline } = require("stream/promises");
 const { getSignedDeliveryUrl } = require("./cloudinary");
 
 async function sendProtectedFile(res, file, { defaultName = "file", invalidPathMessage = "Invalid file path" } = {}) {
@@ -30,8 +32,8 @@ async function sendRemoteFile(res, url, file, defaultName) {
   const contentLength = response.headers.get("content-length");
   if (contentLength) res.setHeader("Content-Length", contentLength);
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return res.send(buffer);
+  if (!response.body) return res.status(502).json({ message: "Stored file returned an empty response" });
+  return pipeline(Readable.fromWeb(response.body), res);
 }
 
 function setInlineFileHeaders(res, file, defaultName) {

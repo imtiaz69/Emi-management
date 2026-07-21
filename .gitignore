@@ -6,3 +6,9 @@ server/uploads/*
 !server/uploads/.gitkeep
 coverage/
 .DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+ai-service/models/
+ai-service/.local-tesseract/
