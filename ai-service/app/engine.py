@@ -172,8 +172,10 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
     quality_ok, warnings = image_quality(image)
     attempts = []
     variants = ocr_variants(image)
-    for variant in variants:
-        data = pytesseract.image_to_data(Image.fromarray(variant), lang=os.getenv("TESSERACT_LANG", "ben+eng"), config="--psm 6", output_type=Output.DICT)
+    selected_variants = [variants[0]] if fast else variants
+    language = os.getenv("TESSERACT_PROFILE_LANG", "eng") if fast else os.getenv("TESSERACT_LANG", "ben+eng")
+    for variant in selected_variants:
+        data = pytesseract.image_to_data(Image.fromarray(variant), lang=language, config="--psm 6", output_type=Output.DICT)
         confidences = [float(value) for value in data["conf"] if str(value) != "-1" and float(value) >= 0]
         confidence = sum(confidences) / len(confidences) / 100 if confidences else 0.0
         text = text_from_ocr_data(data).strip()
@@ -382,5 +384,5 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
             "comparisons": {"nameSimilarity": name_similarity(ocr["fields"].get("name"), qr["fields"].get("name"))},
             "face": face,
             "liveness": liveness,
-            "modelVersions": {"ocr": "tesseract-ben-eng-v2", "qr": "zxing-cpp-2.3", "faceDetector": "yunet-2023mar", "faceRecognizer": "sface-2021dec", "liveness": "mediapipe-face-landmarker-v1"},
+            "modelVersions": {"ocr": "tesseract-eng-profile-v2" if capture_mode == "document_only" else "tesseract-ben-eng-v2", "qr": "zxing-cpp-2.3", "faceDetector": "yunet-2023mar", "faceRecognizer": "sface-2021dec", "liveness": "mediapipe-face-landmarker-v1"},
         }
