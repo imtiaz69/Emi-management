@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.engine import decode_qr, parse_ocr_fields, text_from_ocr_data
+from app.engine import decode_qr, looks_like_nid_back, parse_ocr_fields, text_from_ocr_data
 
 
 def test_front_ocr_accepts_month_name_date():
@@ -12,6 +12,12 @@ def test_front_ocr_accepts_month_name_date():
 def test_front_ocr_accepts_full_month_and_bengali_digits():
     fields = parse_ocr_fields("Name: Test Buyer\nNID: ১২৩৪৫৬৭৮৯০\nDate of Birth: ৩১ December ২০০২")
     assert fields == {"name": "TEST BUYER", "nidNumber": "1234567890", "dateOfBirth": "2002-12-31"}
+
+
+def test_back_side_print_date_is_never_treated_as_date_of_birth():
+    text = "রক্তের গ্রুপ/ Blood Group: O+ জন্মস্থান: ময়মনসিংহ মুদ্রণ: 01 Nov 2025"
+    assert looks_like_nid_back(text) is True
+    assert "dateOfBirth" not in parse_ocr_fields(text)
 
 
 def test_reconstructs_ocr_lines_without_a_second_tesseract_pass():

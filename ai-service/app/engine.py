@@ -70,17 +70,19 @@ def ocr_variants(image: np.ndarray) -> list[np.ndarray]:
 DATE_LABEL_PATTERN = r"(?:D[A4]TE\s*(?:OF\s*)?B[I1L]R[T7]H|D[O0]B|জন্ম\s*তারিখ)"
 MONTH_PATTERN = r"(?:JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)"
 DATE_VALUE_PATTERN = rf"(?:\d{{1,2}}\s+{MONTH_PATTERN}\s+\d{{4}}|{MONTH_PATTERN}\s+\d{{1,2}},?\s+\d{{4}}|\d{{4}}[./-]\d{{1,2}}[./-]\d{{1,2}}|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{4}})"
+NID_BACK_PATTERN = r"(?:BLOOD\s*GROUP|BIRTH\s*PLACE|PLACE\s*OF\s*BIRTH|PRINT(?:ED|ING)?|রক্তের\s*গ্রুপ|জন্মস্থান|মুদ্রণ)"
 
 
 def extract_ocr_date(raw_text: str) -> str:
     translated = raw_text.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
     labelled = re.search(rf"{DATE_LABEL_PATTERN}\s*[:\-]?\s*({DATE_VALUE_PATTERN})", translated, re.I)
     candidate = labelled.group(1) if labelled else ""
-    if not candidate:
-        fallback = re.search(rf"\b({DATE_VALUE_PATTERN})\b", translated, re.I)
-        candidate = fallback.group(1) if fallback else ""
     normalized = normalize_date(candidate)
     return normalized if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized) else ""
+
+
+def looks_like_nid_back(raw_text: str) -> bool:
+    return bool(re.search(NID_BACK_PATTERN, raw_text, re.I))
 
 
 def parse_ocr_fields(raw_text: str) -> dict:
@@ -130,6 +132,9 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
         if confidence > best["confidence"]:
             best = {"text": text, "confidence": confidence}
     fields = parse_ocr_fields(best["text"])
+    if looks_like_nid_back(best["text"]):
+        fields = {}
+        warnings.append("The uploaded image appears to be the back side of the NID. Upload the front side showing the name, NID number, and date of birth.")
     if not fields.get("name"):
         warnings.append("Full name could not be extracted from the NID front.")
     if not fields.get("nidNumber"):
