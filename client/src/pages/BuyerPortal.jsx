@@ -35,6 +35,7 @@ import NotificationInbox from "../components/NotificationInbox.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import StatCard from "../components/StatCard.jsx";
 import { KYC_DOCUMENT_TYPES, formatKycType } from "../utils/kyc.js";
+import { normalizeIdentityImage } from "../utils/identityImage.js";
 import { notifyError, notifyInfo, notifySuccess, notifyWarning } from "../utils/toast.js";
 
 const buyerTabs = [
@@ -72,6 +73,24 @@ function resultReasons(session) {
 function getInitialBuyerTab(search) {
   const tab = new URLSearchParams(search).get("tab");
   return buyerTabKeys.has(tab) ? tab : "overview";
+}
+
+function SelectedIdentityImage({ file, onRemove }) {
+  const [previewUrl, setPreviewUrl] = useState("");
+  useEffect(() => {
+    if (!file) return undefined;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  if (!file) return null;
+  return (
+    <span className="selected-identity-image">
+      {previewUrl && <img src={previewUrl} alt="Selected preview" />}
+      <span title={file.name}>{file.name}</span>
+      <button type="button" title="Remove selected image" aria-label="Remove selected image" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onRemove(); }}><X size={15} /></button>
+    </span>
+  );
 }
 
 export default function BuyerPortal() {
@@ -160,13 +179,14 @@ export default function BuyerPortal() {
 
   async function uploadNidArtifact(kind, file, uploadToken, captureMode) {
     setNidVerificationProgress(`Uploading NID ${kind}...`);
+    const normalizedFile = await normalizeIdentityImage(file, kind === "front" ? "NID front" : "selfie");
     const { data: signed } = await api.post(
       "/identity-verifications/mobile/upload-signature",
       { kind, ...(captureMode ? { captureMode } : {}) },
       { headers: verificationHeaders(uploadToken) }
     );
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", normalizedFile);
     Object.entries(signed.params).forEach(([key, value]) => form.append(key, String(value)));
     form.append("api_key", signed.apiKey);
     form.append("signature", signed.signature);
@@ -174,7 +194,10 @@ export default function BuyerPortal() {
       method: "POST",
       body: form
     });
-    if (!response.ok) throw new Error(`The NID ${kind} image could not be uploaded securely.`);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      throw new Error(failure.error?.message || `The NID ${kind} image could not be uploaded securely.`);
+    }
     const uploaded = await response.json();
     await api.post(
       "/identity-verifications/mobile/artifacts",
@@ -614,16 +637,16 @@ export default function BuyerPortal() {
                         <CreditCard size={28} />
                         <strong>Front side of NID</strong>
                         <small>Keep the name, NID number, and date of birth sharp and readable.</small>
-                        <span className="nid-file-name">{nidFrontFile?.name || "Choose front image"}</span>
-                        <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!profileComplete || identityLocked} onChange={(event) => setNidFrontFile(event.target.files?.[0] || null)} />
+                        {nidFrontFile ? <SelectedIdentityImage file={nidFrontFile} onRemove={() => setNidFrontFile(null)} /> : <span className="nid-file-name">Choose front image</span>}
+                        <input key={nidFrontFile ? `front-${nidFrontFile.name}-${nidFrontFile.lastModified}` : "front-empty"} type="file" accept="image/*" disabled={!profileComplete || identityLocked} onChange={(event) => setNidFrontFile(event.target.files?.[0] || null)} />
                       </label>
                       <label className={`nid-upload-box ${nidSelfieFile ? "selected" : ""} ${!profileComplete || identityLocked ? "disabled" : ""}`}>
                         <span className="mobile-step-number">2</span>
                         <UserRound size={28} />
                         <strong>Live selfie <span className="optional-label">Optional</span></strong>
                         <small>Face the camera directly in good light, without a mask, filter, or another person.</small>
-                        <span className="nid-file-name">{nidSelfieFile?.name || "Capture or choose selfie"}</span>
-                        <input type="file" accept="image/jpeg,image/png,image/webp" capture="user" disabled={!profileComplete || identityLocked} onChange={(event) => setNidSelfieFile(event.target.files?.[0] || null)} />
+                        {nidSelfieFile ? <SelectedIdentityImage file={nidSelfieFile} onRemove={() => setNidSelfieFile(null)} /> : <span className="nid-file-name">Capture or choose selfie</span>}
+                        <input key={nidSelfieFile ? `selfie-${nidSelfieFile.name}-${nidSelfieFile.lastModified}` : "selfie-empty"} type="file" accept="image/*" capture="user" disabled={!profileComplete || identityLocked} onChange={(event) => setNidSelfieFile(event.target.files?.[0] || null)} />
                       </label>
                     </div>
 
@@ -716,9 +739,12 @@ export default function BuyerPortal() {
                     </select>
                   </label>
                   <label>Documents
-                    <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.pdf" onChange={(e) => setFiles(e.target.files)} />
+                    <input key={`supporting-${files.map((file) => `${file.name}-${file.lastModified}`).join("|")}`} type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.pdf" onChange={(e) => setFiles(Array.from(e.target.files || []))} />
                   </label>
                 </div>
+                {files.length > 0 && <div className="selected-file-list" aria-label="Selected supporting documents">
+                  {files.map((file, index) => <span key={`${file.name}-${file.lastModified}-${index}`}><span title={file.name}>{file.name}</span><button type="button" title={`Remove ${file.name}`} aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X size={14} /></button></span>)}
+                </div>}
                 <p className="hint">Passport, TIN, job ID, salary, bank, and other documents support later review. They do not replace successful NID verification for EMI permission.</p>
                 <button className="button secondary" onClick={() => uploadKyc.mutate()} disabled={!files.length || uploadKyc.isPending}>Upload supporting documents</button>
                 <div className="list-stack">

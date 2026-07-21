@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, CheckCircle2, CreditCard, LoaderCircle, RefreshCcw, ShieldCheck, Smartphone, Video, XCircle } from "lucide-react";
 import { api } from "../api/http.js";
+import { normalizeIdentityImage } from "../utils/identityImage.js";
 
 const storageKey = "financelend_identity_upload_token";
 
@@ -57,18 +58,22 @@ export default function MobileIdentityVerification() {
     setBusy(true);
     setError("");
     try {
+      const normalizedFile = await normalizeIdentityImage(file, kind === "front" ? "NID front" : kind === "back" ? "NID back" : "selfie");
       const { data: signed } = await api.post(
         "/identity-verifications/mobile/upload-signature",
         { kind, captureMode },
         { headers: verificationHeaders(token) }
       );
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", normalizedFile);
       Object.entries(signed.params).forEach(([key, value]) => form.append(key, String(value)));
       form.append("api_key", signed.apiKey);
       form.append("signature", signed.signature);
       const cloudinaryResponse = await fetch(`https://api.cloudinary.com/v1_1/${signed.cloudName}/${signed.resourceType}/upload`, { method: "POST", body: form });
-      if (!cloudinaryResponse.ok) throw new Error("Secure upload failed. Please recapture the file.");
+      if (!cloudinaryResponse.ok) {
+        const failure = await cloudinaryResponse.json().catch(() => ({}));
+        throw new Error(failure.error?.message || "Secure upload failed. Please recapture the file.");
+      }
       const uploaded = await cloudinaryResponse.json();
       const { data } = await api.post(
         "/identity-verifications/mobile/artifacts",
@@ -78,6 +83,19 @@ export default function MobileIdentityVerification() {
       setSession(data);
     } catch (requestError) {
       setError(requestError.response?.data?.message || requestError.message || "Unable to upload this capture.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeArtifact(kind) {
+    setBusy(true);
+    setError("");
+    try {
+      const { data } = await api.delete(`/identity-verifications/mobile/artifacts/${kind}`, { headers: verificationHeaders(token) });
+      setSession(data);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Unable to remove this capture.");
     } finally {
       setBusy(false);
     }
@@ -164,13 +182,15 @@ export default function MobileIdentityVerification() {
                 <span className="mobile-step-number">1</span><CreditCard size={25} />
                 <span><strong>Front of NID</strong><small>Place the card on a flat surface with all text visible.</small></span>
                 {session.captures?.front ? <CheckCircle2 className="capture-check" /> : <Camera className="capture-action" />}
-                <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("front", event.target.files[0])} />
+                {session.captures?.front && <button type="button" className="mobile-remove-capture" title="Remove NID front" aria-label="Remove NID front" disabled={busy} onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeArtifact("front"); }}><XCircle size={18} /></button>}
+                <input key={`front-${Boolean(session.captures?.front)}`} type="file" accept="image/*" capture="environment" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("front", event.target.files[0])} />
               </label>
               {!documentOnly && <label className={`mobile-capture-card ${session.captures?.back ? "complete" : ""}`}>
                 <span className="mobile-step-number">2</span><CreditCard size={25} />
                 <span><strong>Back of NID</strong><small>Keep the complete QR code sharp and inside the frame.</small></span>
                 {session.captures?.back ? <CheckCircle2 className="capture-check" /> : <Camera className="capture-action" />}
-                <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("back", event.target.files[0])} />
+                {session.captures?.back && <button type="button" className="mobile-remove-capture" title="Remove NID back" aria-label="Remove NID back" disabled={busy} onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeArtifact("back"); }}><XCircle size={18} /></button>}
+                <input key={`back-${Boolean(session.captures?.back)}`} type="file" accept="image/*" capture="environment" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("back", event.target.files[0])} />
               </label>}
               {!documentOnly && <div className={`mobile-capture-card face-card ${session.captures?.liveness ? "complete" : ""}`}>
                 <span className="mobile-step-number">3</span><Smartphone size={25} />
@@ -181,7 +201,8 @@ export default function MobileIdentityVerification() {
                 <span className="mobile-step-number">2</span><Smartphone size={25} />
                 <span><strong>Live selfie (optional)</strong><small>Look directly at the camera to add a 60% face-similarity check.</small></span>
                 {session.captures?.liveness ? <CheckCircle2 className="capture-check" /> : <Camera className="capture-action" />}
-                <input type="file" accept="image/jpeg,image/png,image/webp" capture="user" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("liveness", event.target.files[0], "selfie")} />
+                {session.captures?.liveness && <button type="button" className="mobile-remove-capture" title="Remove selfie" aria-label="Remove selfie" disabled={busy} onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeArtifact("liveness"); }}><XCircle size={18} /></button>}
+                <input key={`selfie-${Boolean(session.captures?.liveness)}`} type="file" accept="image/*" capture="user" disabled={busy} onChange={(event) => event.target.files?.[0] && uploadArtifact("liveness", event.target.files[0], "selfie")} />
               </label>}
             </div>
 

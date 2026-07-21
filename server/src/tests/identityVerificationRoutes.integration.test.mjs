@@ -21,6 +21,7 @@ const NotificationLog = require("../models/NotificationLog");
 const Order = require("../models/Order");
 const User = require("../models/User");
 const { completeProcessing } = require("../services/identityVerificationService");
+const { hashToken } = require("../utils/identityCrypto");
 
 const models = [AuditLog, BuyerProfile, IdentityVerificationResult, IdentityVerificationSession, KYCDocument, Loan, NotificationLog, Order, User];
 
@@ -121,6 +122,65 @@ describe("identity verification session routes", () => {
     expect(firstExchange.body.uploadToken).toHaveLength(43);
     expect(firstExchange.body.session.status).toBe("CAPTURING");
     expect(replayExchange.status).toBe(410);
+  });
+
+  it("lets the mobile user remove an uploaded selfie and restores document-only mode", async () => {
+    const uploadToken = "mobile-delete-token-123456789012345678901234567890";
+    const session = await IdentityVerificationSession.create({
+      buyerId: buyer._id,
+      initiatedBy: buyer._id,
+      initiatorRole: "buyer",
+      verificationType: "nid_cross_check",
+      uploadTokenHash: hashToken(uploadToken),
+      expiresAt: new Date(Date.now() + 60_000),
+      status: "CAPTURING",
+      captureMode: "document_selfie",
+      artifacts: { liveness: { publicId: "identity-verifications/test-selfie", resourceType: "image", format: "jpg", bytes: 1200 } }
+    });
+    const cloudinaryEnvironment = {
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      apiSecret: process.env.CLOUDINARY_API_SECRET
+    };
+    delete process.env.CLOUDINARY_CLOUD_NAME;
+    delete process.env.CLOUDINARY_API_KEY;
+    delete process.env.CLOUDINARY_API_SECRET;
+    try {
+      const response = await request(app)
+        .delete("/api/identity-verifications/mobile/artifacts/liveness")
+        .set("Authorization", `Verification ${uploadToken}`);
+      expect(response.status).toBe(200);
+      expect(response.body.captures.liveness).toBe(false);
+      expect(response.body.captureMode).toBe("document_only");
+      const saved = await IdentityVerificationSession.findById(session._id);
+      expect(saved.artifacts?.liveness?.publicId).toBeFalsy();
+    } finally {
+      if (cloudinaryEnvironment.cloudName) process.env.CLOUDINARY_CLOUD_NAME = cloudinaryEnvironment.cloudName;
+      if (cloudinaryEnvironment.apiKey) process.env.CLOUDINARY_API_KEY = cloudinaryEnvironment.apiKey;
+      if (cloudinaryEnvironment.apiSecret) process.env.CLOUDINARY_API_SECRET = cloudinaryEnvironment.apiSecret;
+    }
+  });
+
+  it("does not enable selfie processing until the selfie upload is attached", async () => {
+    const uploadToken = "mobile-pending-token-12345678901234567890123456789";
+    const session = await IdentityVerificationSession.create({
+      buyerId: buyer._id,
+      initiatedBy: buyer._id,
+      initiatorRole: "buyer",
+      verificationType: "nid_cross_check",
+      uploadTokenHash: hashToken(uploadToken),
+      expiresAt: new Date(Date.now() + 60_000),
+      status: "CAPTURING",
+      captureMode: "document_only"
+    });
+    const response = await request(app)
+      .post("/api/identity-verifications/mobile/upload-signature")
+      .set("Authorization", `Verification ${uploadToken}`)
+      .send({ kind: "liveness", captureMode: "selfie" });
+    expect(response.status).toBe(200);
+    const saved = await IdentityVerificationSession.findById(session._id);
+    expect(saved.captureMode).toBe("document_only");
+    expect(saved.pendingUploads?.liveness?.publicId).toBeTruthy();
   });
 
   it("blocks NID upload sessions until the buyer profile is complete", async () => {

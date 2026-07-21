@@ -8,7 +8,7 @@ import httpx
 import numpy as np
 import pytesseract
 import zxingcpp
-from PIL import Image
+from PIL import Image, ImageOps
 from pytesseract import Output
 
 from .normalization import name_similarity, normalize_date, normalize_fields, normalize_nid, normalize_text, parse_structured_payload
@@ -65,6 +65,15 @@ def bounded_image(image: np.ndarray, max_side: int) -> np.ndarray:
         return image
     scale = max_side / longest
     return cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+
+
+def load_image(path: Path) -> np.ndarray | None:
+    try:
+        with Image.open(path) as source:
+            oriented = ImageOps.exif_transpose(source).convert("RGB")
+            return cv2.cvtColor(np.asarray(oriented), cv2.COLOR_RGB2BGR)
+    except (OSError, ValueError):
+        return None
 
 
 def ocr_variants(image: np.ndarray) -> list[np.ndarray]:
@@ -230,7 +239,7 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
     quality_ok, warnings = image_quality(image)
     attempts = []
     variants = ocr_variants(image)
-    selected_variants = [variants[0]] if fast else variants
+    selected_variants = [variants[1], variants[0]] if fast else variants
     language = os.getenv("TESSERACT_PROFILE_LANG", "eng") if fast else os.getenv("TESSERACT_LANG", "ben+eng")
     for variant in selected_variants:
         data = pytesseract.image_to_data(Image.fromarray(variant), lang=language, config="--psm 6", output_type=Output.DICT)
@@ -243,6 +252,8 @@ def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
             if targeted_nid:
                 fields["nidNumber"] = targeted_nid
         attempts.append({"text": text, "confidence": confidence, "fields": fields})
+        if fast and all(fields.get(key) for key in ("name", "nidNumber", "dateOfBirth")):
+            break
 
     fields = merge_ocr_fields(attempts)
     best = max(attempts, key=lambda attempt: (len(attempt["fields"]), attempt["confidence"]), default={"text": "", "confidence": 0.0})
@@ -427,8 +438,8 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
                 if not liveness_url:
                     raise ValueError("Live face evidence is required for full identity verification")
                 await download_asset(client, liveness_url, live_path)
-        front_image = cv2.imread(str(front_path))
-        back_image = cv2.imread(str(back_path)) if not document_mode else None
+        front_image = load_image(front_path)
+        back_image = load_image(back_path) if not document_mode else None
         if front_image is None or (not document_mode and back_image is None):
             raise ValueError("A required document image could not be decoded")
         front_image = bounded_image(front_image, 1800)
@@ -441,7 +452,7 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
             liveness = {"status": "NOT_AVAILABLE", "warnings": []}
         else:
             face_engine = FaceEngine()
-            live_image = cv2.imread(str(live_path)) if selfie_mode else sharpest_video_frame(live_path, face_engine)
+            live_image = load_image(live_path) if selfie_mode else sharpest_video_frame(live_path, face_engine)
             face = {"detected": False, "qualityAcceptable": False, "similarity": 0.0, "warnings": ["A live face frame could not be decoded."]}
             if live_image is not None:
                 live_image = bounded_image(live_image, 1280)

@@ -1,7 +1,25 @@
 import cv2
 import numpy as np
+from PIL import Image
 
-from app.engine import decode_qr, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, targeted_nid_from_ocr_data, text_from_ocr_data
+from app.engine import bounded_image, decode_qr, load_image, looks_like_nid_back, merge_ocr_fields, parse_ocr_fields, targeted_nid_from_ocr_data, text_from_ocr_data
+
+
+def test_phone_photo_loader_applies_exif_orientation(tmp_path):
+    path = tmp_path / "phone-photo.jpg"
+    image = Image.new("RGB", (40, 20), "white")
+    exif = image.getexif()
+    exif[274] = 6
+    image.save(path, exif=exif)
+    loaded = load_image(path)
+    assert loaded is not None
+    assert loaded.shape[:2] == (40, 20)
+
+
+def test_large_phone_photo_is_bounded_for_free_ai_memory():
+    image = np.zeros((3000, 4000, 3), dtype=np.uint8)
+    resized = bounded_image(image, 1800)
+    assert resized.shape[:2] == (1350, 1800)
 
 
 def test_front_ocr_accepts_month_name_date():

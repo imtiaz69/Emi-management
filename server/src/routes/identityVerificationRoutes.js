@@ -230,7 +230,6 @@ router.post(
     const resourceType = kind === "liveness" && captureMode === "video" ? "video" : "image";
     const publicId = `identity-verifications/${crypto.randomUUID()}`;
     session.pendingUploads[kind] = { publicId, resourceType, expiresAt: new Date(Date.now() + 5 * 60 * 1000) };
-    if (captureMode) session.captureMode = captureMode;
     await session.save();
     res.json({ ...createSignedDirectUpload({ publicId, resourceType }), expiresAt: session.pendingUploads[kind].expiresAt });
   })
@@ -274,6 +273,26 @@ router.post(
       session.captureMode = session.verificationType === "nid_cross_check" ? "document_selfie" : req.body.captureMode || "video";
     }
     session.captureAttempts[kind] = Number(session.captureAttempts[kind] || 0) + 1;
+    await session.save();
+    res.json(publicSession(session));
+  })
+);
+
+router.delete(
+  "/mobile/artifacts/:kind",
+  mobileLimiter,
+  authenticateMobile,
+  asyncHandler(async (req, res) => {
+    const kind = req.params.kind;
+    if (!Object.hasOwn(artifactRules, kind)) return res.status(404).json({ message: "Identity artifact not found" });
+    const session = req.verificationSession;
+    const artifact = session.artifacts?.[kind];
+    const pending = session.pendingUploads?.[kind];
+    if (artifact?.publicId) await deleteUploadedFile(artifact);
+    if (pending?.publicId) await deleteUploadedFile({ publicId: pending.publicId, resourceType: pending.resourceType });
+    session.artifacts[kind] = undefined;
+    session.pendingUploads[kind] = undefined;
+    if (kind === "liveness" && session.verificationType === "nid_cross_check") session.captureMode = "document_only";
     await session.save();
     res.json(publicSession(session));
   })
