@@ -1,5 +1,21 @@
 services:
   - type: web
+    name: financelend-identity-ai-imtiaz
+    runtime: docker
+    plan: free
+    rootDir: ai-service
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: IDENTITY_AI_SERVICE_KEY
+        sync: false
+      - key: IDENTITY_ALLOWED_ASSET_HOSTS
+        value: financelend-api-imtiaz.onrender.com
+      - key: IDENTITY_LIVENESS_ENABLED
+        value: "false"
+
+  - type: web
     name: financelend-api
     runtime: node
     plan: free
@@ -72,4 +88,4 @@ services:
       - key: IDENTITY_ARTIFACT_RETENTION_HOURS
         value: "24"
       - key: IDENTITY_AI_TIMEOUT_MS
-        value: "180000"
+        value: "300000"

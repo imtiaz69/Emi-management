@@ -52,11 +52,11 @@ npm run seed           # seed configured MongoDB
 - Daily overdue/reminder job plus manual trigger from seller dashboard.
 - Audit logs for important actions.
 - Laptop-to-phone identity verification sessions with one-time QR links.
-- NID front OCR and back QR field comparison.
+- Buyer NID-front OCR comparison against the completed profile.
 - NID portrait versus live-face similarity and basic active liveness.
 - Automatic KYC approval only for fully verified results, with admin overrides.
 
-See [IDENTITY_VERIFICATION_GUIDE.md](IDENTITY_VERIFICATION_GUIDE.md) for local setup, free Hugging Face deployment, the complete demonstration flow, privacy controls, and limitations.
+See [IDENTITY_VERIFICATION_GUIDE.md](IDENTITY_VERIFICATION_GUIDE.md) for local setup, free Render deployment, the complete demonstration flow, privacy controls, and limitations.
 
 ## API Highlights
 

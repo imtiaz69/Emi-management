@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.engine import decode_qr, parse_ocr_fields
+from app.engine import decode_qr, parse_ocr_fields, text_from_ocr_data
 
 
 def test_front_ocr_accepts_month_name_date():
@@ -12,6 +12,16 @@ def test_front_ocr_accepts_month_name_date():
 def test_front_ocr_accepts_full_month_and_bengali_digits():
     fields = parse_ocr_fields("Name: Test Buyer\nNID: ১২৩৪৫৬৭৮৯০\nDate of Birth: ৩১ December ২০০২")
     assert fields == {"name": "TEST BUYER", "nidNumber": "1234567890", "dateOfBirth": "2002-12-31"}
+
+
+def test_reconstructs_ocr_lines_without_a_second_tesseract_pass():
+    data = {
+        "text": ["Name:", "Demo", "Buyer", "", "NID:", "1234567890"],
+        "block_num": [1, 1, 1, 1, 1, 1],
+        "par_num": [1, 1, 1, 1, 1, 1],
+        "line_num": [1, 1, 1, 1, 2, 2],
+    }
+    assert text_from_ocr_data(data) == "Name: Demo Buyer\nNID: 1234567890"
 
 
 def make_qr(payload: str) -> np.ndarray:

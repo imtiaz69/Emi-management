@@ -103,14 +103,30 @@ def parse_ocr_fields(raw_text: str) -> dict:
     return normalize_fields(fields)
 
 
-def extract_ocr(image: np.ndarray) -> dict:
+def text_from_ocr_data(data: dict) -> str:
+    lines: dict[tuple[int, int, int], list[str]] = {}
+    for index, value in enumerate(data.get("text", [])):
+        word = str(value).strip()
+        if not word:
+            continue
+        key = (
+            int(data.get("block_num", [0])[index]),
+            int(data.get("par_num", [0])[index]),
+            int(data.get("line_num", [0])[index]),
+        )
+        lines.setdefault(key, []).append(word)
+    return "\n".join(" ".join(words) for words in lines.values())
+
+
+def extract_ocr(image: np.ndarray, fast: bool = False) -> dict:
     quality_ok, warnings = image_quality(image)
     best = {"text": "", "confidence": 0.0}
-    for variant in ocr_variants(image):
+    variants = ocr_variants(image)
+    for variant in ([variants[1]] if fast else variants):
         data = pytesseract.image_to_data(Image.fromarray(variant), lang=os.getenv("TESSERACT_LANG", "ben+eng"), config="--psm 6", output_type=Output.DICT)
         confidences = [float(value) for value in data["conf"] if str(value) != "-1" and float(value) >= 0]
         confidence = sum(confidences) / len(confidences) / 100 if confidences else 0.0
-        text = pytesseract.image_to_string(Image.fromarray(variant), lang=os.getenv("TESSERACT_LANG", "ben+eng"), config="--psm 6").strip()
+        text = text_from_ocr_data(data).strip()
         if confidence > best["confidence"]:
             best = {"text": text, "confidence": confidence}
     fields = parse_ocr_fields(best["text"])
@@ -294,7 +310,7 @@ async def analyze(front_url: str, back_url: str | None, liveness_url: str | None
         back_image = cv2.imread(str(back_path)) if capture_mode != "document_only" else None
         if front_image is None or (capture_mode != "document_only" and back_image is None):
             raise ValueError("A required document image could not be decoded")
-        ocr = extract_ocr(front_image)
+        ocr = extract_ocr(front_image, fast=capture_mode == "document_only")
         qr = {"status": "NOT_REQUIRED", "rawData": "", "fields": {}} if capture_mode == "document_only" else decode_qr(back_image)
         if capture_mode == "document_only":
             face = {"detected": False, "qualityAcceptable": False, "similarity": 0.0, "warnings": []}
