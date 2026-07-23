@@ -350,8 +350,8 @@ function publicSession(session, result, sensitive) {
     purgeAt: value.purgeAt,
     purgedAt: value.purgedAt,
     lastError: value.status === "ERROR"
-      ? /fetch failed|failed to fetch|aborted|econn|timeout|temporarily unavailable/i.test(String(value.lastError || ""))
-        ? "The verification service was temporarily unavailable. Please submit the NID verification again. Your selfie is optional."
+      ? /fetch failed|failed to fetch|aborted|econn|timeout|temporarily unavailable|waking up|Identity AI returned (?:429|5\d\d)/i.test(String(value.lastError || ""))
+        ? "The verification service was temporarily unavailable. Please try the NID verification again. Your selfie is optional."
         : value.lastError
       : undefined,
     result: publicResult,

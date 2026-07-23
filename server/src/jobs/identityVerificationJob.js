@@ -6,6 +6,28 @@ let processing = false;
 let timer;
 let cleanupTimer;
 
+const transientStatusPattern = /\b(?:429|500|502|503|504)\b/;
+const transientNetworkPattern = /fetch failed|failed to fetch|aborted|econn|enotfound|socket|timeout|temporarily unavailable/i;
+
+function isTransientAiError(error) {
+  const message = String(error?.message || error || "");
+  return transientNetworkPattern.test(message)
+    || (/Identity AI returned/i.test(message) && transientStatusPattern.test(message));
+}
+
+function retryDelayMs(attempts) {
+  const base = Number(process.env.IDENTITY_AI_RETRY_BASE_MS || 15_000);
+  return Math.min(base * 2 ** Math.max(0, attempts - 1), 120_000);
+}
+
+function safeAiErrorMessage(error) {
+  if (isTransientAiError(error)) {
+    return "The verification service is waking up or temporarily unavailable. Your verification will retry automatically.";
+  }
+  const message = String(error?.message || "Identity processing failed");
+  return message.replace(/<!doctype[\s\S]*$/i, "").trim().slice(0, 300) || "Identity processing failed";
+}
+
 function notifySession(session) {
   const payload = { sessionId: session._id.toString(), status: session.status, updatedAt: session.updatedAt || new Date() };
   emitToUser(session.initiatedBy, "identity:session.updated", payload);
@@ -25,6 +47,9 @@ async function callAiService(session) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Number(process.env.IDENTITY_AI_TIMEOUT_MS || 180000));
   try {
+    const healthResponse = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+    if (!healthResponse.ok) throw new Error(`Identity AI returned ${healthResponse.status} while waking`);
+
     const response = await fetch(`${baseUrl}/v1/identity/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Identity-Service-Key": serviceKey },
@@ -43,7 +68,10 @@ async function callAiService(session) {
       signal: controller.signal
     });
     if (!response.ok) {
-      const message = await response.text().catch(() => "");
+      const contentType = response.headers.get("content-type") || "";
+      const message = contentType.includes("application/json")
+        ? await response.text().catch(() => "")
+        : "";
       throw new Error(`Identity AI returned ${response.status}${message ? `: ${message.slice(0, 160)}` : ""}`);
     }
     return response.json();
@@ -85,14 +113,13 @@ async function runIdentityVerificationJobs() {
         });
       } catch (error) {
         const attempts = Number(session.processingAttempts || 0);
-        const technicalMessage = String(error.message || "Identity processing failed");
-        session.lastError = /fetch failed|aborted|ECONN|timeout/i.test(technicalMessage)
-          ? "The verification service was temporarily unavailable. Please submit the verification again."
-          : technicalMessage.slice(0, 300);
+        const transient = isTransientAiError(error);
+        const maxAttempts = Number(process.env.IDENTITY_AI_MAX_ATTEMPTS || 6);
+        session.lastError = safeAiErrorMessage(error);
         session.processingLeaseAt = undefined;
-        if (attempts < 3) {
+        if (transient && attempts < maxAttempts) {
           session.status = "QUEUED";
-          session.nextAttemptAt = new Date(Date.now() + 15_000 * 2 ** (attempts - 1));
+          session.nextAttemptAt = new Date(Date.now() + retryDelayMs(attempts));
         } else {
           session.status = "ERROR";
         }
@@ -117,4 +144,10 @@ function startIdentityVerificationJobs() {
   runIdentityVerificationJobs().catch((error) => console.error("Initial identity job failed", error.message));
 }
 
-module.exports = { runIdentityVerificationJobs, startIdentityVerificationJobs };
+module.exports = {
+  isTransientAiError,
+  retryDelayMs,
+  runIdentityVerificationJobs,
+  safeAiErrorMessage,
+  startIdentityVerificationJobs
+};
